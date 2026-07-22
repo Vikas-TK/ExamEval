@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[project]
+name = "exam-eval-platform"
+version = "1.0.0"
+requires-python = ">=3.11,<3.14"
+description = "Anonymous exam evaluation and OCR processing API"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

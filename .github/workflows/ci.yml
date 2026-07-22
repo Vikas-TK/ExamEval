@@ -1,0 +1,36 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: exam_eval
+          POSTGRES_USER: exam_eval
+          POSTGRES_PASSWORD: exam_eval
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U exam_eval -d exam_eval"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pytest ruff
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      - run: alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg2://exam_eval:exam_eval@localhost:5432/exam_eval
+          IDENTITY_HASH_SECRET: ci-only-secret
+      - run: ruff check .
+      - run: pytest
+        env:
+          DATABASE_URL: postgresql+psycopg2://exam_eval:exam_eval@localhost:5432/exam_eval
+          IDENTITY_HASH_SECRET: ci-only-secret

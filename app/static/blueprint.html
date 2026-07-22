@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exam Blueprint Management - Anonymous Exam Platform</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-color: #ffffff;
+      --text-color: #0d0d0d;
+      --text-muted: #6b7280;
+      --card-bg: #ffffff;
+      --border-color: #e5e7eb;
+      --primary-gradient: linear-gradient(135deg, #10b981 0%, #fbbf24 100%);
+      --btn-green: #10b981;
+      --btn-yellow: #fbbf24;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+      --radius: 12px;
+      --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: var(--primary-gradient);
+      padding: 1.5rem 2rem;
+      box-shadow: var(--shadow-md);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      color: white;
+    }
+
+    .header-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+
+    header p {
+      font-size: 0.875rem;
+      opacity: 0.9;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .nav-links a {
+      color: white;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      transition: var(--transition);
+    }
+
+    .nav-links a:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .auth-box {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .auth-box input {
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      color: white;
+      font-size: 0.875rem;
+      outline: none;
+      transition: var(--transition);
+    }
+
+    .auth-box input::placeholder {
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .auth-box input:focus {
+      background: rgba(255, 255, 255, 0.3);
+      border-color: white;
+    }
+
+    main {
+      flex: 1;
+      max-width: 1200px;
+      width: 100%;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2rem;
+    }
+
+    @media (min-width: 900px) {
+      main {
+        grid-template-columns: 1fr 1.5fr;
+      }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 2rem;
+      box-shadow: var(--shadow-md);
+      transition: var(--transition);
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .card:hover {
+      box-shadow: var(--shadow-lg);
+    }
+
+    .card-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      border-bottom: 2px solid var(--border-color);
+      padding-bottom: 0.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    label {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    input[type="text"], input[type="number"], select, textarea {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: var(--transition);
+      font-family: inherit;
+    }
+
+    input[type="text"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
+      border-color: var(--btn-green);
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+      font-family: monospace;
+      font-size: 0.85rem;
+    }
+
+    .file-input-wrapper {
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      background: #f9fafb;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: var(--transition);
+      border: none;
+      outline: none;
+      gap: 0.5rem;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background-color: var(--btn-green);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background-color: #059669;
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background-color: var(--btn-yellow);
+      color: #3b2a04;
+    }
+
+    .btn-secondary:hover {
+      background-color: #f59e0b;
+      transform: translateY(-1px);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.25rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+
+    .badge-mcq { background: #e0f2fe; color: #0369a1; }
+    .badge-short { background: #dcfce7; color: #15803d; }
+    .badge-descriptive { background: #fef3c7; color: #b45309; }
+    .badge-diagram { background: #f3e8ff; color: #6b21a8; }
+    .badge-other { background: #f3f4f6; color: #374151; }
+
+    .meta-display-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+    }
+
+    .meta-item {
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 0.75rem;
+      background: #f9fafb;
+    }
+
+    .meta-item h4 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 0.15rem;
+    }
+
+    .meta-item p {
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .section-container {
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1.25rem;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .section-header {
+      font-weight: 600;
+      font-size: 1.1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 0.5rem;
+    }
+
+    .questions-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    .questions-table th, .questions-table td {
+      padding: 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .questions-table th {
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    footer {
+      background: var(--primary-gradient);
+      padding: 1.5rem 2rem;
+      color: white;
+      text-align: center;
+      font-size: 0.875rem;
+      margin-top: auto;
+      box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+
+    .spinner {
+      border: 3px solid rgba(16, 185, 129, 0.1);
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border-left-color: var(--btn-green);
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #333;
+      color: white;
+      padding: 1rem 1.5rem;
+      border-radius: 8px;
+      box-shadow: var(--shadow-lg);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: var(--transition);
+      z-index: 1000;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-content">
+      <div>
+        <h1>Exam Blueprint Management</h1>
+        <p>Phase 2 Ingestion, Question Extraction & Layout Modeling</p>
+      </div>
+      <div class="nav-links">
+        <a href="/static/index.html">Student Ingestion (Phase 1)</a>
+        <div class="auth-box">
+          <input type="text" id="apiKey" placeholder="Enter X-API-Key">
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left panel: Ingestion Form -->
+    <div class="card">
+      <div class="card-title">Generate Exam Blueprint</div>
+      <form id="blueprintForm">
+        <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+          <div class="form-group">
+            <label for="ocrJsonInput">OCR Transcript JSON (Required)</label>
+            <textarea id="ocrJsonInput" required placeholder='{ "pages": [ { "page_number": 1, "transcript": "..." } ] }'></textarea>
+            <div style="margin-top: 0.25rem;">
+              <span style="font-size: 0.75rem; color: var(--text-muted);">OR upload a JSON file:</span>
+              <input type="file" id="ocrJsonFile" accept=".json" style="font-size: 0.8rem; margin-left: 0.5rem;">
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="answerKeyFile">Faculty Answer Key (Optional - TXT, DOCX, PDF)</label>
+            <input type="file" id="answerKeyFile" accept=".txt,.docx,.pdf" class="file-input-wrapper">
+          </div>
+
+          <div style="border-top: 1px solid var(--border-color); padding-top: 1rem;">
+            <p style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-muted);">
+              Optional Manual Metadata (leave empty to auto-extract from OCR)
+            </p>
+            <div class="form-group">
+              <label for="exam_name">Exam Name</label>
+              <input type="text" id="exam_name" placeholder="e.g. End Semester Examinations">
+            </div>
+            <div class="form-row" style="margin-top: 0.75rem;">
+              <div class="form-group">
+                <label for="subject">Subject Title</label>
+                <input type="text" id="subject" placeholder="e.g. Database Management">
+              </div>
+              <div class="form-group">
+                <label for="subject_code">Subject Code</label>
+                <input type="text" id="subject_code" placeholder="e.g. CS3401">
+              </div>
+            </div>
+            <div class="form-row" style="margin-top: 0.75rem;">
+              <div class="form-group">
+                <label for="regulation">Regulation</label>
+                <input type="text" id="regulation" placeholder="e.g. R2021">
+              </div>
+              <div class="form-group">
+                <label for="semester">Semester</label>
+                <input type="text" id="semester" placeholder="e.g. IV">
+              </div>
+            </div>
+            <div class="form-row" style="margin-top: 0.75rem;">
+              <div class="form-group">
+                <label for="department">Department</label>
+                <input type="text" id="department" placeholder="e.g. CSE">
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="duration">Duration (Min)</label>
+                  <input type="number" id="duration" placeholder="180">
+                </div>
+                <div class="form-group">
+                  <label for="max_marks">Max Marks</label>
+                  <input type="number" id="max_marks" placeholder="100">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="submitBtn" style="margin-top: 0.5rem;">
+            <span>Generate Blueprint</span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Right panel: Dashboard & Question Viewer -->
+    <div class="card">
+      <div class="card-title">
+        <span>Blueprint Dashboard</span>
+        <div id="actionsContainer" style="display: none; gap: 0.5rem;">
+          <button class="btn btn-secondary" id="dlBlueprintBtn" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">
+            Download JSON
+          </button>
+          <button class="btn btn-secondary" id="dlKeyBtn" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; display: none;">
+            Answer Key File
+          </button>
+        </div>
+      </div>
+      
+      <div id="blueprintDisplaySection" style="display: none;" class="detail-section">
+        <div class="meta-display-grid">
+          <div class="meta-item">
+            <h4>Exam Name</h4>
+            <p id="dispExam">-</p>
+          </div>
+          <div class="meta-item">
+            <h4>Subject (Code)</h4>
+            <p id="dispSubject">-</p>
+          </div>
+          <div class="meta-item">
+            <h4>Regulation / Sem</h4>
+            <p id="dispRegSem">-</p>
+          </div>
+          <div class="meta-item">
+            <h4>Max Marks / Duration</h4>
+            <p id="dispMarksDur">-</p>
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; flex-direction: column; gap: 1.5rem;" id="sectionsList">
+          <!-- Sections will be rendered here dynamically -->
+        </div>
+      </div>
+
+      <div id="emptySection" style="text-align: center; padding: 6rem 0; color: var(--text-muted);">
+        <p>No blueprint loaded.</p>
+        <p style="font-size: 0.85rem; margin-top: 0.5rem;">Upload the OCR JSON on the left to generate the layout model.</p>
+      </div>
+
+      <div id="loadingIndicator" style="display: none; align-items: center; gap: 0.5rem; justify-content: center; padding: 4rem 0; color: var(--text-muted);">
+        <div class="spinner"></div>
+        <span>Analyzing layout structure and generating blueprint...</span>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <p>&copy; 2026 Anonymous Exam Evaluation Platform. Phase 2 Layout Ingestion Engine.</p>
+  </footer>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // Toast manager
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    // JSON file upload handler helper
+    document.getElementById('ocrJsonFile').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        document.getElementById('ocrJsonInput').value = evt.target.result;
+      };
+      reader.readAsText(file);
+    });
+
+    let currentBlueprint = null;
+
+    // Form submission
+    document.getElementById('blueprintForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.disabled = true;
+      submitBtn.querySelector('span').textContent = 'Analyzing...';
+      
+      document.getElementById('emptySection').style.display = 'none';
+      document.getElementById('blueprintDisplaySection').style.display = 'none';
+      document.getElementById('loadingIndicator').style.display = 'flex';
+      document.getElementById('actionsContainer').style.display = 'none';
+
+      const apiKey = document.getElementById('apiKey').value;
+      const headers = {};
+      if (apiKey) {
+        headers['X-API-Key'] = apiKey;
+      }
+
+      // Prepare metadata
+      const examNameVal = document.getElementById('exam_name').value;
+      const subjectVal = document.getElementById('subject').value;
+      const subjectCodeVal = document.getElementById('subject_code').value;
+      const regulationVal = document.getElementById('regulation').value;
+      const semesterVal = document.getElementById('semester').value;
+      const departmentVal = document.getElementById('department').value;
+      const durationVal = document.getElementById('duration').value;
+      const maxMarksVal = document.getElementById('max_marks').value;
+
+      let metadataStr = null;
+      if (examNameVal || subjectVal || subjectCodeVal || regulationVal || semesterVal || departmentVal || durationVal || maxMarksVal) {
+        metadataStr = JSON.stringify({
+          exam_name: examNameVal || "Examination",
+          subject: subjectVal || "Subject",
+          subject_code: subjectCodeVal || "CODE",
+          regulation: regulationVal || "R",
+          semester: semesterVal || "I",
+          department: departmentVal || "Dept",
+          duration_minutes: parseInt(durationVal || "180", 10),
+          maximum_marks: parseFloat(maxMarksVal || "100")
+        });
+      }
+
+      const formData = new FormData();
+      formData.append('ocr_json', document.getElementById('ocrJsonInput').value);
+      if (metadataStr) {
+        formData.append('metadata', metadataStr);
+      }
+      
+      const keyFile = document.getElementById('answerKeyFile').files[0];
+      if (keyFile) {
+        formData.append('answer_key', keyFile);
+      }
+
+      try {
+        const response = await fetch('/blueprints', {
+          method: 'POST',
+          headers: headers,
+          body: formData
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.detail || 'Blueprint generation failed');
+        }
+
+        const data = await response.json();
+        showToast('Blueprint generated successfully!');
+        
+        // Fetch full blueprint details using GET /blueprints/{id}
+        await loadBlueprint(data.blueprint_id);
+      } catch (error) {
+        console.error(error);
+        showToast('Error: ' + error.message);
+        document.getElementById('emptySection').style.display = 'block';
+        document.getElementById('loadingIndicator').style.display = 'none';
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.querySelector('span').textContent = 'Generate Blueprint';
+      }
+    });
+
+    async function loadBlueprint(blueprintId) {
+      const apiKey = document.getElementById('apiKey').value;
+      const headers = {};
+      if (apiKey) {
+        headers['X-API-Key'] = apiKey;
+      }
+
+      try {
+        const response = await fetch(`/blueprints/${blueprintId}`, {
+          headers: headers
+        });
+
+        if (!response.ok) throw new Error('Could not fetch blueprint details');
+        
+        const data = await response.json();
+        currentBlueprint = data;
+
+        // Render dashboard
+        document.getElementById('dispExam').textContent = data.metadata.exam_name;
+        document.getElementById('dispSubject').textContent = `${data.metadata.subject} (${data.metadata.subject_code})`;
+        document.getElementById('dispRegSem').textContent = `${data.metadata.regulation} / Semester ${data.metadata.semester}`;
+        document.getElementById('dispMarksDur').textContent = `${data.metadata.maximum_marks} Marks / ${data.metadata.duration_minutes} min`;
+
+        // Render Sections and Questions
+        const listContainer = document.getElementById('sectionsList');
+        listContainer.innerHTML = '';
+
+        data.sections.forEach(s => {
+          const sectionDiv = document.createElement('div');
+          sectionDiv.className = 'section-container';
+
+          let qRows = '';
+          s.questions.forEach(q => {
+            const badgeType = q.question_type.toLowerCase().split('_')[0];
+            const answerText = q.faculty_answer || '<span style="color: var(--text-muted); font-style: italic;">None Mapped</span>';
+            qRows += `
+              <tr>
+                <td style="font-weight: 600;">Q${q.question_number}</td>
+                <td>${q.question_text}</td>
+                <td><span class="badge badge-${badgeType}">${q.question_type}</span></td>
+                <td><strong>${q.maximum_marks}</strong></td>
+                <td>${answerText}</td>
+              </tr>
+            `;
+          });
+
+          sectionDiv.innerHTML = `
+            <div class="section-header">
+              <span>${s.name}</span>
+              <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;">
+                ${s.instructions || ''}
+              </span>
+            </div>
+            <table class="questions-table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">No.</th>
+                  <th>Question Description</th>
+                  <th style="width: 140px;">Type</th>
+                  <th style="width: 80px;">Marks</th>
+                  <th>Faculty Answer Key Mapping</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${qRows}
+              </tbody>
+            </table>
+          `;
+          listContainer.appendChild(sectionDiv);
+        });
+
+        document.getElementById('loadingIndicator').style.display = 'none';
+        document.getElementById('blueprintDisplaySection').style.display = 'flex';
+        
+        // Show Actions
+        document.getElementById('actionsContainer').style.display = 'flex';
+        
+        // Setup download listeners
+        document.getElementById('dlBlueprintBtn').onclick = () => {
+          if (data.blueprint_url) window.open(data.blueprint_url, '_blank');
+        };
+
+        const keyBtn = document.getElementById('dlKeyBtn');
+        if (data.faculty_answer_key_s3_url) {
+          keyBtn.style.display = 'inline-flex';
+          keyBtn.onclick = () => {
+            window.open(data.faculty_answer_key_s3_url, '_blank');
+          };
+        } else {
+          keyBtn.style.display = 'none';
+        }
+
+      } catch (error) {
+        showToast('Error loading details: ' + error.message);
+      }
+    }
+  </script>
+</body>
+</html>

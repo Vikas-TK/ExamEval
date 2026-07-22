@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anonymous Exam Evaluation Platform</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-color: #ffffff;
+      --text-color: #0d0d0d;
+      --text-muted: #6b7280;
+      --card-bg: #ffffff;
+      --border-color: #e5e7eb;
+      --primary-gradient: linear-gradient(135deg, #10b981 0%, #fbbf24 100%);
+      --btn-green: #10b981;
+      --btn-yellow: #fbbf24;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+      --radius: 12px;
+      --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: var(--primary-gradient);
+      padding: 1.5rem 2rem;
+      box-shadow: var(--shadow-md);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      color: white;
+    }
+
+    .header-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+
+    header p {
+      font-size: 0.875rem;
+      opacity: 0.9;
+    }
+
+    .auth-box {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .auth-box input {
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      color: white;
+      font-size: 0.875rem;
+      outline: none;
+      transition: var(--transition);
+    }
+
+    .auth-box input::placeholder {
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .auth-box input:focus {
+      background: rgba(255, 255, 255, 0.3);
+      border-color: white;
+    }
+
+    main {
+      flex: 1;
+      max-width: 1200px;
+      width: 100%;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2rem;
+    }
+
+    @media (min-width: 900px) {
+      main {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 2rem;
+      box-shadow: var(--shadow-md);
+      transition: var(--transition);
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .card:hover {
+      box-shadow: var(--shadow-lg);
+    }
+
+    .card-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      border-bottom: 2px solid var(--border-color);
+      padding-bottom: 0.5rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    label {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    input[type="text"], select {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: var(--transition);
+    }
+
+    input[type="text"]:focus, select:focus {
+      border-color: var(--btn-green);
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+    }
+
+    .file-dropzone {
+      border: 2px dashed var(--border-color);
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: var(--transition);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .file-dropzone:hover, .file-dropzone.dragover {
+      border-color: var(--btn-green);
+      background: rgba(16, 185, 129, 0.02);
+    }
+
+    .file-dropzone input {
+      display: none;
+    }
+
+    .file-dropzone svg {
+      width: 48px;
+      height: 48px;
+      color: var(--text-muted);
+      transition: var(--transition);
+    }
+
+    .file-dropzone:hover svg {
+      color: var(--btn-green);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: var(--transition);
+      border: none;
+      outline: none;
+      gap: 0.5rem;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background-color: var(--btn-green);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background-color: #059669;
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background-color: var(--btn-yellow);
+      color: #3b2a04;
+    }
+
+    .btn-secondary:hover {
+      background-color: #f59e0b;
+      transform: translateY(-1px);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-processing {
+      background-color: #dbeafe;
+      color: #1e40af;
+    }
+
+    .badge-completed {
+      background-color: #d1fae5;
+      color: #065f46;
+    }
+
+    .badge-review {
+      background-color: #fef3c7;
+      color: #92400e;
+    }
+
+    .badge-failed {
+      background-color: #fee2e2;
+      color: #991b1b;
+    }
+
+    .status-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .status-item {
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: var(--transition);
+      cursor: pointer;
+    }
+
+    .status-item:hover {
+      border-color: var(--btn-green);
+      background: rgba(16, 185, 129, 0.01);
+    }
+
+    .detail-section {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1rem;
+    }
+
+    .detail-card {
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+      background: #f9fafb;
+    }
+
+    .detail-card h4 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .detail-card p {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .failure-reasons {
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      padding: 1rem;
+      color: #991b1b;
+    }
+
+    .failure-reasons ul {
+      margin-left: 1.25rem;
+      margin-top: 0.5rem;
+    }
+
+    .transcript-box {
+      background: #fafafa;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: monospace;
+      font-size: 0.875rem;
+      max-height: 250px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    footer {
+      background: var(--primary-gradient);
+      padding: 1.5rem 2rem;
+      color: white;
+      text-align: center;
+      font-size: 0.875rem;
+      margin-top: auto;
+      box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+
+    .spinner {
+      border: 3px solid rgba(16, 185, 129, 0.1);
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border-left-color: var(--btn-green);
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #333;
+      color: white;
+      padding: 1rem 1.5rem;
+      border-radius: 8px;
+      box-shadow: var(--shadow-lg);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: var(--transition);
+      z-index: 1000;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-content">
+      <div>
+        <h1>Anonymous Exam Evaluation</h1>
+        <p>Phase 1 Ingestion, Quality Guard & OCR Pipeline</p>
+      </div>
+      <div class="auth-box">
+        <label for="apiKey">API Key:</label>
+        <input type="text" id="apiKey" placeholder="Enter X-API-Key" value="">
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left panel: Ingestion Form & Uploads -->
+    <div class="card">
+      <div class="card-title">Upload Answer Sheet</div>
+      <form id="uploadForm">
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+          <div class="form-group">
+            <label for="regulation">Regulation</label>
+            <input type="text" id="regulation" required placeholder="e.g. R2021">
+          </div>
+          <div class="form-group">
+            <label for="semester">Semester</label>
+            <input type="text" id="semester" required placeholder="e.g. IV">
+          </div>
+          <div class="form-group">
+            <label for="subject_id">Subject ID</label>
+            <input type="text" id="subject_id" required placeholder="e.g. CS3401">
+          </div>
+          <div class="form-group">
+            <label for="register_number">Register Number</label>
+            <input type="text" id="register_number" required placeholder="e.g. 312221104001">
+          </div>
+          <div class="form-group">
+            <label>Answer Sheet File (PNG, JPEG, PDF)</label>
+            <div class="file-dropzone" id="dropzone">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <span id="dropzoneText">Drag and drop file here or click to browse</span>
+              <input type="file" id="fileInput" accept="image/png, image/jpeg, image/jpg, application/pdf" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary" id="submitBtn">
+            <span>Submit for Evaluation</span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Right panel: Queue & Processing status -->
+    <div class="card">
+      <div class="card-title">Processing Status & Active Reviews</div>
+      
+      <div id="activeEvaluationSection" style="display: none;" class="detail-section">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="font-size: 1.1rem; font-weight: 600;">Active Evaluation</h3>
+          <span id="activeBadge" class="badge">PROCESSING</span>
+        </div>
+        
+        <div class="detail-grid">
+          <div class="detail-card">
+            <h4>Evaluation ID</h4>
+            <p id="detailEvalId" style="font-size: 0.85rem; word-break: break-all;">-</p>
+          </div>
+          <div class="detail-card">
+            <h4>Subject ID</h4>
+            <p id="detailSubjectId">-</p>
+          </div>
+        </div>
+
+        <div id="qualityDetails" class="detail-section" style="display: none;">
+          <h4 style="font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted);">Quality Metrics</h4>
+          <div class="detail-grid" style="grid-template-columns: repeat(3, 1fr);">
+            <div class="detail-card">
+              <h4>Blur Score</h4>
+              <p id="valBlur">-</p>
+            </div>
+            <div class="detail-card">
+              <h4>Contrast</h4>
+              <p id="valContrast">-</p>
+            </div>
+            <div class="detail-card">
+              <h4>Noise Score</h4>
+              <p id="valNoise">-</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="failureReasonBox" class="failure-reasons" style="display: none;">
+          <strong>Failed Quality Checks:</strong>
+          <ul id="failureReasonList"></ul>
+        </div>
+
+        <div id="ocrResultBox" class="detail-section" style="display: none;">
+          <h4 style="font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted);">OCR Transcript Output</h4>
+          <div class="transcript-box" id="transcriptText"></div>
+          <div style="display: flex; gap: 1rem;">
+            <button class="btn btn-secondary" id="downloadTranscriptBtn" style="flex: 1;">
+              Download Full Transcript
+            </button>
+          </div>
+        </div>
+
+        <div id="pollingIndicator" style="display: flex; align-items: center; gap: 0.5rem; justify-content: center; color: var(--text-muted); font-size: 0.9rem;">
+          <div class="spinner"></div>
+          <span>Processing pipeline active... polling database...</span>
+        </div>
+      </div>
+
+      <div id="emptySection" style="text-align: center; padding: 3rem 0; color: var(--text-muted);">
+        <p>No active evaluations to track.</p>
+        <p style="font-size: 0.85rem; margin-top: 0.5rem;">Fill out the form on the left to start ingestion.</p>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <p>&copy; 2026 Anonymous Exam Evaluation Platform. Built with FastAPI & Qwen2.5-VL.</p>
+  </footer>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // Register PWA service worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/static/sw.js')
+          .then(reg => console.log('Service worker registered.'))
+          .catch(err => console.log('Service worker registration failed:', err));
+      });
+    }
+
+    // Dropzone management
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const dropzoneText = document.getElementById('dropzoneText');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropzone.addEventListener(eventName, () => dropzone.classList.remove('dragover'));
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        updateFilename();
+      }
+    });
+
+    fileInput.addEventListener('change', updateFilename);
+
+    function updateFilename() {
+      if (fileInput.files.length) {
+        dropzoneText.textContent = fileInput.files[0].name;
+      } else {
+        dropzoneText.textContent = 'Drag and drop file here or click to browse';
+      }
+    }
+
+    // Toast manager
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    // UI tracking variables
+    let pollInterval = null;
+    let currentEvaluationId = null;
+
+    // Submit handler
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.disabled = true;
+      submitBtn.querySelector('span').textContent = 'Uploading...';
+
+      const formData = new FormData();
+      formData.append('regulation', document.getElementById('regulation').value);
+      formData.append('semester', document.getElementById('semester').value);
+      formData.append('subject_id', document.getElementById('subject_id').value);
+      formData.append('register_number', document.getElementById('register_number').value);
+      formData.append('file', fileInput.files[0]);
+
+      const apiKey = document.getElementById('apiKey').value;
+      const headers = {};
+      if (apiKey) {
+        headers['X-API-Key'] = apiKey;
+      }
+
+      try {
+        const response = await fetch('/evaluations', {
+          method: 'POST',
+          headers: headers,
+          body: formData
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.detail || 'Ingestion failed');
+        }
+
+        const data = await response.json();
+        showToast('Submission accepted! Processing...');
+        startTracking(data.evaluation_id);
+      } catch (error) {
+        console.error(error);
+        showToast('Error: ' + error.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.querySelector('span').textContent = 'Submit for Evaluation';
+      }
+    });
+
+    // Tracking & Polling logic
+    function startTracking(evaluationId) {
+      if (pollInterval) clearInterval(pollInterval);
+      currentEvaluationId = evaluationId;
+
+      document.getElementById('emptySection').style.display = 'none';
+      document.getElementById('activeEvaluationSection').style.display = 'flex';
+      
+      // Reset details UI
+      document.getElementById('detailEvalId').textContent = evaluationId;
+      document.getElementById('detailSubjectId').textContent = document.getElementById('subject_id').value;
+      document.getElementById('activeBadge').className = 'badge badge-processing';
+      document.getElementById('activeBadge').textContent = 'PROCESSING';
+      document.getElementById('qualityDetails').style.display = 'none';
+      document.getElementById('failureReasonBox').style.display = 'none';
+      document.getElementById('ocrResultBox').style.display = 'none';
+      document.getElementById('pollingIndicator').style.display = 'flex';
+
+      pollStatus();
+      pollInterval = setInterval(pollStatus, 3000);
+    }
+
+    async function pollStatus() {
+      if (!currentEvaluationId) return;
+
+      const apiKey = document.getElementById('apiKey').value;
+      const headers = {};
+      if (apiKey) {
+        headers['X-API-Key'] = apiKey;
+      }
+
+      try {
+        const response = await fetch(`/evaluations/${currentEvaluationId}`, {
+          headers: headers
+        });
+
+        if (!response.ok) {
+          throw new Error('Could not fetch status');
+        }
+
+        const data = await response.json();
+        
+        // Update details UI
+        document.getElementById('detailSubjectId').textContent = data.subject_id;
+        
+        // Badge style
+        const badge = document.getElementById('activeBadge');
+        badge.textContent = data.status;
+        badge.className = 'badge ' + 'badge-' + data.status.toLowerCase().replace('_', '-');
+
+        // Quality Gate Report
+        if (data.quality_report) {
+          document.getElementById('qualityDetails').style.display = 'flex';
+          document.getElementById('valBlur').textContent = data.quality_report.blur_score.toFixed(1);
+          document.getElementById('valContrast').textContent = data.quality_report.contrast_score.toFixed(1);
+          document.getElementById('valNoise').textContent = data.quality_report.noise_score.toFixed(1);
+
+          if (!data.quality_report.passed) {
+            document.getElementById('failureReasonBox').style.display = 'block';
+            const list = document.getElementById('failureReasonList');
+            list.innerHTML = '';
+            data.quality_report.failure_reasons.forEach(r => {
+              const li = document.createElement('li');
+              li.textContent = r;
+              list.appendChild(li);
+            });
+          } else {
+            document.getElementById('failureReasonBox').style.display = 'none';
+          }
+        }
+
+        // OCR Result
+        if (data.ocr_data && data.ocr_data.pages && data.ocr_data.pages.length) {
+          document.getElementById('ocrResultBox').style.display = 'flex';
+          const transcriptBox = document.getElementById('transcriptText');
+          
+          let transcriptHtml = '';
+          data.ocr_data.pages.forEach(p => {
+            transcriptHtml += `<strong>Page ${p.page_number} (Confidence: ${(p.confidence * 100).toFixed(0)}%)</strong>\n${p.transcript}\n\n`;
+          });
+          transcriptBox.innerHTML = transcriptHtml;
+        }
+
+        // Finished check
+        if (data.status === 'COMPLETED' || data.status === 'NEEDS_REVIEW' || data.status === 'FAILED') {
+          clearInterval(pollInterval);
+          document.getElementById('pollingIndicator').style.display = 'none';
+          showToast(`Pipeline terminated with status: ${data.status}`);
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    // Download transcript handler
+    document.getElementById('downloadTranscriptBtn').addEventListener('click', async () => {
+      if (!currentEvaluationId) return;
+
+      const apiKey = document.getElementById('apiKey').value;
+      const headers = {};
+      if (apiKey) {
+        headers['X-API-Key'] = apiKey;
+      }
+
+      try {
+        const response = await fetch(`/evaluations/${currentEvaluationId}/transcript`, {
+          headers: headers
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to retrieve transcript download URL');
+        }
+
+        const data = await response.json();
+        // Redirect browser to the S3 signed URL to download
+        window.open(data.url, '_blank');
+      } catch (error) {
+        showToast('Error downloading transcript: ' + error.message);
+      }
+    });
+  </script>
+</body>
+</html>

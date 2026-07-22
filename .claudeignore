@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.git/
+app/__pycache__/
+*.db
+*.sqlite
+*.log

@@ -1,0 +1,127 @@
+"""
+Storage Layer package maintaining backwards compatibility for Phase 1 and Phase 2.
+Delegates file storage operations to StorageService.
+"""
+
+import io
+import logging
+from app.core.config import get_settings
+from app.storage.storage_service import storage_service, StorageService, SupabaseStorageProvider, BaseStorageProvider
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+_s3_client = None
+
+
+def _get_s3_client():
+    global _s3_client
+    if _s3_client is None:
+        import boto3
+        kwargs = {"region_name": settings.aws_region or "ap-south-1"}
+        if settings.aws_access_key_id:
+            kwargs.update(
+                aws_access_key_id=settings.aws_access_key_id,
+                aws_secret_access_key=settings.aws_secret_access_key,
+            )
+        if settings.s3_endpoint_url:
+            kwargs["endpoint_url"] = settings.s3_endpoint_url
+        _s3_client = boto3.client("s3", **kwargs)
+    return _s3_client
+
+
+def _perform_s3_backup(data: bytes, key: str, content_type: str):
+    if not settings.aws_backup_enabled:
+        return
+    try:
+        bucket = settings.aws_s3_bucket or settings.s3_bucket_name
+        _get_s3_client().put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=data,
+            ContentType=content_type,
+            ServerSideEncryption="AES256",
+        )
+        logger.info("S3 backup successful for key=%s", key)
+    except Exception as exc:
+        logger.warning("S3 backup failed for key=%s: %s", key, exc)
+
+
+def upload_bytes(data: bytes, key: str, content_type: str = "application/octet-stream") -> str:
+    bucket_name = settings.storage_bucket_question or settings.storage_bucket or "question-papers"
+    url = storage_service.upload_file(data, bucket_name, key, content_type)
+    if settings.aws_backup_enabled:
+        _perform_s3_backup(data, key, content_type)
+    return url
+
+
+def upload_image(image_bytes: bytes, evaluation_id: str, stage: str, filename: str) -> str:
+    mapped_stage = "original" if stage == "raw" else stage
+    key = f"answer-sheets/{mapped_stage}/{evaluation_id}/{filename}"
+    content_type = "image/png" if filename.lower().endswith(".png") else "application/octet-stream"
+    bucket = settings.storage_bucket_question or "question-papers"
+    return storage_service.upload_file(image_bytes, bucket, key, content_type)
+
+
+def upload_transcript(data: bytes, evaluation_id: str) -> str:
+    bucket = settings.storage_bucket_report or "evaluation-reports"
+    return storage_service.upload_file(data, bucket, f"answer-sheets/transcripts/{evaluation_id}/transcript.txt", "text/plain; charset=utf-8")
+
+
+def upload_blueprint(data: bytes, blueprint_id: str) -> str:
+    bucket = settings.storage_bucket_blueprint or "exam-blueprints"
+    return storage_service.upload_file(data, bucket, f"{blueprint_id}/blueprint.json", "application/json")
+
+
+def upload_faculty_answer_key(data: bytes, blueprint_id: str, filename: str) -> str:
+    content_type = "application/octet-stream"
+    if filename.lower().endswith(".txt"):
+        content_type = "text/plain; charset=utf-8"
+    elif filename.lower().endswith(".docx"):
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif filename.lower().endswith(".pdf"):
+        content_type = "application/pdf"
+    bucket = settings.storage_bucket_faculty or "faculty-answer-keys"
+    return storage_service.upload_file(data, bucket, f"{blueprint_id}/{filename}", content_type)
+
+
+def upload_report(data: bytes, filename: str) -> str:
+    bucket = settings.storage_bucket_report or "evaluation-reports"
+    return storage_service.upload_file(data, bucket, filename, "application/octet-stream")
+
+
+def presigned_url(key: str) -> str:
+    bucket_name = settings.storage_bucket_question or settings.storage_bucket or "question-papers"
+    if settings.supabase_url:
+        return f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{key}"
+    return f"https://supabase.local/storage/v1/object/public/{bucket_name}/{key}"
+
+
+def download_bytes(key: str) -> bytes:
+    bucket_name = settings.storage_bucket_question or settings.storage_bucket or "question-papers"
+    data = storage_service.download_file(bucket_name, key)
+    if not data and settings.aws_backup_enabled:
+        try:
+            buf = io.BytesIO()
+            bucket = settings.aws_s3_bucket or settings.s3_bucket_name
+            _get_s3_client().download_fileobj(bucket, key, buf)
+            return buf.getvalue()
+        except Exception as exc:
+            logger.warning("S3 backup download fallback failed for key=%s: %s", key, exc)
+    return data
+
+
+__all__ = [
+    "upload_bytes",
+    "upload_image",
+    "upload_transcript",
+    "upload_blueprint",
+    "upload_faculty_answer_key",
+    "upload_report",
+    "presigned_url",
+    "download_bytes",
+    "StorageService",
+    "storage_service",
+    "SupabaseStorageProvider",
+    "BaseStorageProvider",
+]
