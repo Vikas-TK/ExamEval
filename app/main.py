@@ -23,6 +23,7 @@ import app.phase5_agents.router as _phase5_router_mod   # Phase 5 Multi-Agent Ev
 import app.phase5_agents.models                         # noqa: F401 - register Phase5 tables
 import app.phase6_consensus.router as _phase6_router_mod# Phase 6 Multi-Agent Consensus Engine
 import app.phase6_consensus.models                      # noqa: F401 - register Phase6 table
+import app.routers.manual_review as _manual_review_mod # Manual Review & Re-trigger Router
 
 settings = get_settings()
 
@@ -175,6 +176,9 @@ app.include_router(_phase5_router_mod.router, prefix="/api")
 # Phase 6 - Multi-Agent Consensus Engine
 app.include_router(_phase6_router_mod.router)
 app.include_router(_phase6_router_mod.router, prefix="/api")
+# Modules 9-14 - Manual Review & Management Engine
+app.include_router(_manual_review_mod.router)
+app.include_router(_manual_review_mod.router, prefix="/api")
 
 # Mount Static Files & Frontend SPA Integration
 if os.path.exists("frontend/dist"):
