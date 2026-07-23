@@ -51,10 +51,18 @@ class Phase3Service:
             .filter(ExamBlueprint.blueprint_id == blueprint_id)
             .first()
         )
+        if not record or record.status != "Approved":
+            from app.blueprint_manager import get_active_approved_blueprint
+            subj_code = record.subject_code if record else "GENERAL"
+            approved_bp = get_active_approved_blueprint(self._db, subj_code)
+            if approved_bp:
+                record = approved_bp
+
         if not record:
-            raise ValueError(f"ExamBlueprint not found for blueprint_id={blueprint_id}")
-        # Reconstruct blueprint dict from ORM fields
+            raise ValueError(f"No approved ExamBlueprint found for blueprint_id={blueprint_id}")
+
         blueprint_json: dict[str, Any] = {
+            "blueprint_id": str(record.blueprint_id),
             "exam_name": record.exam_name,
             "subject": record.subject,
             "subject_code": record.subject_code,
@@ -63,7 +71,10 @@ class Phase3Service:
             "department": record.department,
             "duration_minutes": record.duration_minutes,
             "maximum_marks": record.maximum_marks,
-            "sections": record.sections if isinstance(record.sections, list) else [],
+            "sections": record.sections,
+            "faculty_answer_key": record.faculty_answer_key or [],
+            "status": record.status,
+            "blueprint_type": record.blueprint_type,
         }
         return blueprint_json
 

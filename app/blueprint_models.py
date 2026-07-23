@@ -29,6 +29,13 @@ class ExamBlueprint(Base):
     faculty_answer_key: Mapped[list | None] = mapped_column(JSONB().with_variant(JSON, "sqlite"), nullable=True)
     blueprint_s3_url: Mapped[str | None] = mapped_column(String, nullable=True)
     faculty_answer_key_s3_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="Approved")  # Draft | Under Review | Approved | Archived
+    blueprint_type: Mapped[str] = mapped_column(String(50), nullable=False, default="ai_generated")  # manual_builder | json_upload | ai_generated
+    academic_year: Mapped[str] = mapped_column(String(50), nullable=False, default="2025-2026")
+    exam_type: Mapped[str] = mapped_column(String(100), nullable=False, default="Internal Assessment")
+    is_template: Mapped[bool] = mapped_column(nullable=False, default=False)
+    template_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                onupdate=func.now())
