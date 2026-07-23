@@ -42,11 +42,11 @@ export default function App() {
               <Route path="/blueprints" element={<BlueprintPage apiKey={apiKey} />} />
               <Route path="/academic-master" element={<AcademicMasterPage apiKey={apiKey} />} />
               <Route path="/ocr-results" element={<AnswerSheetPage apiKey={apiKey} />} />
-              <Route path="/question-analysis" element={<QuestionAnalysisPage apiKey={apiKey} />} />
+              <Route path="/question-analysis" element={<Navigate to="/" replace />} />
               <Route path="/student-performance" element={<StudentPerformancePage apiKey={apiKey} />} />
               <Route path="/history" element={<HistoryPage apiKey={apiKey} />} />
               <Route path="/reports" element={<ReportsPage apiKey={apiKey} />} />
-              <Route path="/settings" element={<SettingsPage apiKey={apiKey} />} />
+              <Route path="/settings" element={<Navigate to="/" replace />} />
               <Route path="/qa-mapping" element={<QAMappingPage apiKey={apiKey} />} />
               <Route path="/evaluate" element={<EvaluationRunPage apiKey={apiKey} />} />
               <Route path="/results-matrix" element={<MarksMatrixPage apiKey={apiKey} />} />

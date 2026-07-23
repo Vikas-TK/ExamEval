@@ -32,11 +32,9 @@ const primaryLinks = [
 ];
 
 const secondaryLinks = [
-  { to: '/question-analysis', label: 'Question analysis', icon: HelpCircle },
   { to: '/student-performance', label: 'Student performance', icon: UserCheck },
   { to: '/history', label: 'Evaluation history', icon: History },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
-  { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export default function Sidebar({ open, onClose }) {
