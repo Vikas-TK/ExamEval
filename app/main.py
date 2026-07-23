@@ -19,6 +19,10 @@ import app.phase4.router as _phase4_router_mod   # Phase 4 AI Evaluation
 import app.phase4.models                          # noqa: F401 - register Phase4 table
 import app.phase4_context.router as _phase4_ctx_router_mod # Phase 4 Evaluation Context Builder
 import app.phase4_context.models                      # noqa: F401 - register Phase4 Context table
+import app.phase5_agents.router as _phase5_router_mod   # Phase 5 Multi-Agent Evaluation Engine
+import app.phase5_agents.models                         # noqa: F401 - register Phase5 tables
+import app.phase6_consensus.router as _phase6_router_mod# Phase 6 Multi-Agent Consensus Engine
+import app.phase6_consensus.models                      # noqa: F401 - register Phase6 table
 
 settings = get_settings()
 
@@ -165,6 +169,12 @@ app.include_router(_phase4_router_mod.router, prefix="/api")
 # Phase 4 - Evaluation Context Builder
 app.include_router(_phase4_ctx_router_mod.router)
 app.include_router(_phase4_ctx_router_mod.router, prefix="/api")
+# Phase 5 - Multi-Agent Answer Evaluation Engine
+app.include_router(_phase5_router_mod.router)
+app.include_router(_phase5_router_mod.router, prefix="/api")
+# Phase 6 - Multi-Agent Consensus Engine
+app.include_router(_phase6_router_mod.router)
+app.include_router(_phase6_router_mod.router, prefix="/api")
 
 # Mount Static Files & Frontend SPA Integration
 if os.path.exists("frontend/dist"):
