@@ -63,8 +63,8 @@ class Settings(BaseSettings):
     # --- Pipeline & OCR Thresholds ---
     ocr_confidence_threshold: float = 60.0
     blur_threshold: float = 30.0
-    brightness_low: int = 30
-    brightness_high: int = 245
+    brightness_low: int = 20
+    brightness_high: int = 254
     skew_angle_threshold: float = 10.0
     min_image_width: int = 0
     min_image_height: int = 0
