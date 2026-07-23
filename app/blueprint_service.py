@@ -35,10 +35,17 @@ def create_blueprint(
     is_update = existing is not None and isinstance(existing, ExamBlueprint)
     blueprint_id = existing.blueprint_id if is_update else uuid.uuid4()
 
+    from app.storage import upload_subject_file
+
     faculty_s3_url = None
     if answer_key_bytes and answer_key_filename:
-        faculty_s3_url = upload_faculty_answer_key(
-            answer_key_bytes, str(blueprint_id), answer_key_filename
+        faculty_s3_url = upload_subject_file(
+            data=answer_key_bytes,
+            subject_code=metadata.subject_code,
+            academic_year="2025-2026",
+            semester=metadata.semester,
+            category="faculty-answer-keys",
+            filename=answer_key_filename,
         )
 
     blueprint_json = json.dumps({
@@ -46,7 +53,14 @@ def create_blueprint(
         "metadata": metadata.model_dump(),
         "sections": [section.model_dump() for section in sections],
     }).encode("utf-8")
-    s3_url = upload_blueprint(blueprint_json, str(blueprint_id))
+    s3_url = upload_subject_file(
+        data=blueprint_json,
+        subject_code=metadata.subject_code,
+        academic_year="2025-2026",
+        semester=metadata.semester,
+        category="blueprints",
+        filename=f"BP_{metadata.subject_code}_{str(blueprint_id)[:8]}.json",
+    )
 
     if is_update:
         for key, value in metadata.model_dump().items():

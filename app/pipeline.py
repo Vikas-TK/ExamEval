@@ -178,9 +178,17 @@ def process_evaluation(evaluation_id: uuid.UUID, raw_bytes: bytes, filename: str
         record.noise_score = quality_report.noise_score
         record.resolution_passed = quality_report.resolution_passed
 
+        subj_code = str(record.subject_id or "GENERAL")
         raw_name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or "upload.bin"
         try:
-            raw_url = storage.upload_image(raw_bytes, str(evaluation_id), "original", raw_name)
+            raw_url = storage.upload_subject_file(
+                data=raw_bytes,
+                subject_code=subj_code,
+                academic_year="2025-2026",
+                semester="SEM",
+                category="answer-sheets",
+                filename=f"RAW_{str(evaluation_id)[:8]}_{raw_name}",
+            )
             record.raw_s3_url = raw_url
         except Exception as exc:
             logger.warning("Raw image storage upload failed for evaluation %s: %s", evaluation_id, exc)
@@ -198,8 +206,13 @@ def process_evaluation(evaluation_id: uuid.UUID, raw_bytes: bytes, filename: str
                 enhanced_bytes = page_bytes  # fall back to raw page rather than dropping it
 
             try:
-                enhanced_url = storage.upload_image(
-                    enhanced_bytes, str(evaluation_id), "enhanced", f"{idx}.png"
+                enhanced_url = storage.upload_subject_file(
+                    data=enhanced_bytes,
+                    subject_code=subj_code,
+                    academic_year="2025-2026",
+                    semester="SEM",
+                    category="answer-sheets",
+                    filename=f"ANS_{subj_code}_STU_{str(evaluation_id)[:8]}_P{idx}.png",
                 )
             except Exception as exc:
                 logger.warning("Enhanced image storage upload failed on page %s of %s: %s", idx, evaluation_id, exc)

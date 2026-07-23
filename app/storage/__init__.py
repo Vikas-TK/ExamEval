@@ -114,6 +114,57 @@ def upload_report(data: bytes, filename: str) -> str:
         return f"storage-fallback://{filename}"
 
 
+def build_canonical_question_label(raw_qno: str) -> str:
+    """Returns clean canonical display label e.g. Q13, Q14, Q15 instead of raw UUIDs."""
+    s = str(raw_qno or "").strip().upper()
+    if s.startswith("Q") and len(s) > 1 and s[1:].isdigit():
+        return s
+    if s.isdigit():
+        return f"Q{s}"
+    return f"Q{s}" if len(s) <= 4 and not s.startswith("Q") else s
+
+
+def upload_subject_file(
+    data: bytes,
+    subject_code: str,
+    academic_year: str,
+    semester: str,
+    category: str,
+    filename: str,
+    student_id: str | None = None,
+) -> str:
+    """
+    Subject-wise naming convention & storage pathing:
+    {subject_code}/{academic_year}/{semester}/{category}/[student_id/]{filename}
+    """
+    clean_sub = (subject_code or "GENERAL").upper().replace("/", "_").strip()
+    clean_ay = (academic_year or "2025-2026").replace("/", "-").strip()
+    clean_sem = (semester or "SEM").upper().replace(" ", "").strip()
+
+    if student_id and category == "answer-sheets":
+        key = f"{clean_sub}/{clean_ay}/{clean_sem}/answer-sheets/{student_id}/{filename}"
+    else:
+        key = f"{clean_sub}/{clean_ay}/{clean_sem}/{category}/{filename}"
+
+    bucket = settings.storage_bucket_question or settings.storage_bucket or "question-papers"
+    content_type = "application/octet-stream"
+    if filename.lower().endswith(".pdf"):
+        content_type = "application/pdf"
+    elif filename.lower().endswith(".png"):
+        content_type = "image/png"
+    elif filename.lower().endswith(".json"):
+        content_type = "application/json"
+
+    try:
+        url = storage_service.upload_file(data, bucket, key, content_type)
+        if settings.aws_backup_enabled:
+            _perform_s3_backup(data, key, content_type)
+        return url
+    except Exception as exc:
+        logger.warning("Storage upload_subject_file failed for key=%s: %s", key, exc)
+        return f"storage-fallback://{key}"
+
+
 def presigned_url(key: str) -> str:
     bucket_name = settings.storage_bucket_question or settings.storage_bucket or "question-papers"
     if settings.supabase_url:
@@ -138,6 +189,8 @@ def download_bytes(key: str) -> bytes:
 __all__ = [
     "upload_bytes",
     "upload_image",
+    "upload_subject_file",
+    "build_canonical_question_label",
     "upload_transcript",
     "upload_blueprint",
     "upload_faculty_answer_key",
