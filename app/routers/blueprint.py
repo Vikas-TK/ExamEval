@@ -152,24 +152,41 @@ def delete_exam_blueprint(
 
 
 def _to_create_response(blueprint: ExamBlueprint) -> BlueprintCreateResponse:
-    metadata = ExamMetadata.model_validate({key: getattr(blueprint, key) for key in ExamMetadata.model_fields})
+    metadata_dict = {}
+    for key in ExamMetadata.model_fields:
+        val = getattr(blueprint, key, None)
+        if val is None:
+            if key == "duration_minutes":
+                val = 180
+            elif key == "maximum_marks":
+                val = 100.0
+            else:
+                val = "GENERAL"
+        metadata_dict[key] = val
+    metadata = ExamMetadata.model_validate(metadata_dict)
     return BlueprintCreateResponse(
-        blueprint_id=blueprint.blueprint_id, metadata=metadata,
-        sections=blueprint.sections,
+        blueprint_id=blueprint.blueprint_id,
+        metadata=metadata,
+        sections=blueprint.sections or [],
         faculty_answer_key_mapped=blueprint.faculty_answer_key is not None,
     )
 
 
 def _to_output(blueprint: ExamBlueprint) -> BlueprintOut:
+    def _safe_url(url: str | None) -> str | None:
+        if not url:
+            return None
+        if url.startswith("http://") or url.startswith("https://") or url.startswith("storage-fallback://"):
+            return url
+        try:
+            return presigned_url(url.split("/", 3)[-1])
+        except Exception:
+            return url
+
     return BlueprintOut(
-        **_to_create_response(blueprint).model_dump(), source_ocr=blueprint.source_ocr,
+        **_to_create_response(blueprint).model_dump(),
+        source_ocr=blueprint.source_ocr or {},
         faculty_answer_key=blueprint.faculty_answer_key,
-        blueprint_url=(
-            presigned_url(blueprint.blueprint_s3_url.split("/", 3)[-1])
-            if blueprint.blueprint_s3_url else None
-        ),
-        faculty_answer_key_s3_url=(
-            presigned_url(blueprint.faculty_answer_key_s3_url.split("/", 3)[-1])
-            if blueprint.faculty_answer_key_s3_url else None
-        ),
+        blueprint_url=_safe_url(blueprint.blueprint_s3_url),
+        faculty_answer_key_s3_url=_safe_url(blueprint.faculty_answer_key_s3_url),
     )
