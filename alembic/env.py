@@ -1,44 +1,71 @@
+"""
+Alembic migration environment.
+
+- Reads DATABASE_URL from the .env file via app.core.config.get_settings()
+- Imports ALL SQLAlchemy models so Base.metadata reflects every table
+"""
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.config import get_settings
-from app.database import Base
-from app import models  # noqa: F401 - ensures models are registered on Base.metadata
-from app import blueprint_models  # noqa: F401 - ensures Phase 2 models are registered
-from app import academic_master_models  # noqa: F401 - registers Academic Master models
+# ── load settings (reads DATABASE_URL from .env) ──────────────────────────
+from app.core.config import get_settings
 
+settings = get_settings()
+
+# ── import every model so Base.metadata knows all tables ──────────────────
+from app.db.base import Base                           # declarative base
+from app.models.evaluation import (                    # evaluation_records, student_identity
+    EvaluationRecord, StudentIdentity, EvaluationStatus
+)
+from app.blueprint_models import ExamBlueprint         # exam_blueprints
+from app.academic_master_models import (               # academic_master
+    AcademicMaster, AcademicMasterStatus
+)
+
+# ── alembic config ─────────────────────────────────────────────────────────
 config = context.config
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Override the sqlalchemy.url with the value from .env (DATABASE_URL)
+# configparser uses % for interpolation — escape any literal % in the URL
+_db_url = settings.database_url.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", _db_url)
+
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
+    """Run migrations in 'online' mode (default)."""
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

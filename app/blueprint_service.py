@@ -24,33 +24,56 @@ def create_blueprint(
     if answer_key:
         sections = attach_answer_key(sections, answer_key)
     validate_blueprint(metadata, sections)
-    
-    blueprint_id = uuid.uuid4()
-    
+
+    existing = db.query(ExamBlueprint).filter_by(
+        exam_name=metadata.exam_name,
+        subject_code=metadata.subject_code,
+        regulation=metadata.regulation,
+        semester=metadata.semester,
+    ).first()
+
+    is_update = existing is not None and isinstance(existing, ExamBlueprint)
+    blueprint_id = existing.blueprint_id if is_update else uuid.uuid4()
+
     faculty_s3_url = None
     if answer_key_bytes and answer_key_filename:
         faculty_s3_url = upload_faculty_answer_key(
             answer_key_bytes, str(blueprint_id), answer_key_filename
         )
 
-    blueprint = ExamBlueprint(
-        blueprint_id=blueprint_id,
-        **metadata.model_dump(),
-        sections=[section.model_dump() for section in sections],
-        source_ocr=ocr,
-        faculty_answer_key=(
-            [{"question_number": key, "answer": value} for key, value in answer_key.items()]
-            if answer_key else None
-        ),
-        faculty_answer_key_s3_url=faculty_s3_url,
-    )
     blueprint_json = json.dumps({
-        "blueprint_id": str(blueprint.blueprint_id),
+        "blueprint_id": str(blueprint_id),
         "metadata": metadata.model_dump(),
         "sections": [section.model_dump() for section in sections],
     }).encode("utf-8")
-    blueprint.blueprint_s3_url = upload_blueprint(blueprint_json, str(blueprint.blueprint_id))
-    db.add(blueprint)
+    s3_url = upload_blueprint(blueprint_json, str(blueprint_id))
+
+    if is_update:
+        for key, value in metadata.model_dump().items():
+            setattr(existing, key, value)
+        existing.sections = [section.model_dump() for section in sections]
+        existing.source_ocr = ocr
+        if answer_key:
+            existing.faculty_answer_key = [{"question_number": key, "answer": value} for key, value in answer_key.items()]
+        if faculty_s3_url:
+            existing.faculty_answer_key_s3_url = faculty_s3_url
+        existing.blueprint_s3_url = s3_url
+        blueprint = existing
+    else:
+        blueprint = ExamBlueprint(
+            blueprint_id=blueprint_id,
+            **metadata.model_dump(),
+            sections=[section.model_dump() for section in sections],
+            source_ocr=ocr,
+            faculty_answer_key=(
+                [{"question_number": key, "answer": value} for key, value in answer_key.items()]
+                if answer_key else None
+            ),
+            faculty_answer_key_s3_url=faculty_s3_url,
+            blueprint_s3_url=s3_url,
+        )
+        db.add(blueprint)
+
     try:
         db.commit()
         db.refresh(blueprint)

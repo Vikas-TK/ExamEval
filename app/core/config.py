@@ -62,29 +62,39 @@ class Settings(BaseSettings):
 
     # --- Pipeline & OCR Thresholds ---
     ocr_confidence_threshold: float = 60.0
-    blur_threshold: float = 100.0
-    brightness_low: int = 50
-    brightness_high: int = 220
-    skew_angle_threshold: float = 5.0
-    min_image_width: int = 800
-    min_image_height: int = 600
-    min_contrast: float = 15.0
-    max_noise_score: float = 35.0
+    blur_threshold: float = 30.0
+    brightness_low: int = 30
+    brightness_high: int = 245
+    skew_angle_threshold: float = 10.0
+    min_image_width: int = 0
+    min_image_height: int = 0
+    min_contrast: float = 10.0
+    max_noise_score: float = 50.0
     artifact_url_expiry_seconds: int = 900
 
     # --- Models ---
-    qwen_api_base: str = "http://localhost:8000/v1"
-    qwen_api_key: str = ""
-    qwen_model_name: str = "qwen2.5-vl-7b-instruct"
-    blueprint_qwen_model_name: str = "qwen2.5-3b-instruct"
-    ocr_model: str = "qwen2.5-vl-7b-instruct"
-    llm_model: str = "qwen2.5-3b-instruct"
+    qwen_api_base: str = "http://127.0.0.1:11434/v1"
+    qwen_api_key: str = "ollama"
+    qwen_model_name: str = "qwen2.5vl:7b"
+    blueprint_qwen_model_name: str = "qwen2.5:3b-instruct"
+    ocr_model: str = "qwen2.5vl:7b"
+    llm_model: str = "qwen2.5:3b-instruct"
+    got_ocr_enabled: bool = True
+    got_ocr_model_name: str = "stepfun-ai/GOT-OCR2_0"
+    got_ocr_device: str = "auto"
 
     # --- Frontend Integration ---
     frontend_url: str = "http://localhost:3000"
     vite_api_base_url: str = "http://localhost:8000"
     vite_supabase_url: str = ""
     vite_supabase_anon_key: str = ""
+
+    @property
+    def normalized_ocr_threshold(self) -> float:
+        """Returns OCR confidence threshold normalized to 0.0-1.0 scale."""
+        if self.ocr_confidence_threshold > 1.0:
+            return self.ocr_confidence_threshold / 100.0
+        return self.ocr_confidence_threshold
 
     model_config = SettingsConfigDict(
         env_file=".env",

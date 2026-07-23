@@ -23,20 +23,32 @@ def create_db_engine(url: str) -> Engine:
         kwargs.update(
             pool_size=settings.database_pool_size,
             max_overflow=settings.database_max_overflow,
-            pool_recycle=1800,
+            pool_recycle=30,
+            pool_timeout=30,
         )
     return create_engine(url, **kwargs)
 
 
-# Initialize engine with primary URL, falling back to local SQLite if primary connection fails
-try:
-    engine: Engine = create_db_engine(primary_db_url)
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
-    logger.info("Successfully connected to primary database.")
-except Exception as primary_exc:
-    logger.warning(f"Primary database connection failed ({primary_exc}). Falling back to local SQLite ({fallback_db_url}).")
-    engine: Engine = create_db_engine(fallback_db_url)
+import time
+
+# Initialize engine with primary URL, with retries before falling back to local SQLite
+engine: Engine = None
+for attempt in range(1, 4):
+    try:
+        temp_engine = create_db_engine(primary_db_url)
+        with temp_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine = temp_engine
+        logger.info("Successfully connected to primary Supabase PostgreSQL database.")
+        break
+    except Exception as primary_exc:
+        logger.warning(f"Primary database connection attempt {attempt}/3 failed: {primary_exc}")
+        if attempt < 3:
+            time.sleep(1.0)
+
+if engine is None:
+    logger.warning(f"Primary database unavailable. Falling back to local SQLite ({fallback_db_url}).")
+    engine = create_db_engine(fallback_db_url)
 
 
 def check_database_connection() -> bool:

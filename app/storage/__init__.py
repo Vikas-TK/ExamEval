@@ -48,46 +48,70 @@ def _perform_s3_backup(data: bytes, key: str, content_type: str):
 
 
 def upload_bytes(data: bytes, key: str, content_type: str = "application/octet-stream") -> str:
-    bucket_name = settings.storage_bucket_question or settings.storage_bucket or "question-papers"
-    url = storage_service.upload_file(data, bucket_name, key, content_type)
-    if settings.aws_backup_enabled:
-        _perform_s3_backup(data, key, content_type)
-    return url
+    try:
+        bucket_name = settings.storage_bucket_question or settings.storage_bucket or "question-papers"
+        url = storage_service.upload_file(data, bucket_name, key, content_type)
+        if settings.aws_backup_enabled:
+            _perform_s3_backup(data, key, content_type)
+        return url
+    except Exception as exc:
+        logger.warning("Storage upload_bytes failed for key=%s: %s", key, exc)
+        return f"storage-fallback://{key}"
 
 
 def upload_image(image_bytes: bytes, evaluation_id: str, stage: str, filename: str) -> str:
-    mapped_stage = "original" if stage == "raw" else stage
-    key = f"answer-sheets/{mapped_stage}/{evaluation_id}/{filename}"
-    content_type = "image/png" if filename.lower().endswith(".png") else "application/octet-stream"
-    bucket = settings.storage_bucket_question or "question-papers"
-    return storage_service.upload_file(image_bytes, bucket, key, content_type)
+    try:
+        mapped_stage = "original" if stage == "raw" else stage
+        key = f"answer-sheets/{mapped_stage}/{evaluation_id}/{filename}"
+        content_type = "image/png" if filename.lower().endswith(".png") else "application/octet-stream"
+        bucket = settings.storage_bucket_question or "question-papers"
+        return storage_service.upload_file(image_bytes, bucket, key, content_type)
+    except Exception as exc:
+        logger.warning("Storage upload_image failed for evaluation_id=%s stage=%s: %s", evaluation_id, stage, exc)
+        return f"storage-fallback://answer-sheets/{stage}/{evaluation_id}/{filename}"
 
 
 def upload_transcript(data: bytes, evaluation_id: str) -> str:
-    bucket = settings.storage_bucket_report or "evaluation-reports"
-    return storage_service.upload_file(data, bucket, f"answer-sheets/transcripts/{evaluation_id}/transcript.txt", "text/plain; charset=utf-8")
+    try:
+        bucket = settings.storage_bucket_report or "evaluation-reports"
+        return storage_service.upload_file(data, bucket, f"answer-sheets/transcripts/{evaluation_id}/transcript.txt", "text/plain; charset=utf-8")
+    except Exception as exc:
+        logger.warning("Storage upload_transcript failed for evaluation_id=%s: %s", evaluation_id, exc)
+        return f"storage-fallback://answer-sheets/transcripts/{evaluation_id}/transcript.txt"
 
 
 def upload_blueprint(data: bytes, blueprint_id: str) -> str:
-    bucket = settings.storage_bucket_blueprint or "exam-blueprints"
-    return storage_service.upload_file(data, bucket, f"{blueprint_id}/blueprint.json", "application/json")
+    try:
+        bucket = settings.storage_bucket_blueprint or "exam-blueprints"
+        return storage_service.upload_file(data, bucket, f"{blueprint_id}/blueprint.json", "application/json")
+    except Exception as exc:
+        logger.warning("Storage upload_blueprint failed for blueprint_id=%s: %s", blueprint_id, exc)
+        return f"storage-fallback://{blueprint_id}/blueprint.json"
 
 
 def upload_faculty_answer_key(data: bytes, blueprint_id: str, filename: str) -> str:
-    content_type = "application/octet-stream"
-    if filename.lower().endswith(".txt"):
-        content_type = "text/plain; charset=utf-8"
-    elif filename.lower().endswith(".docx"):
-        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif filename.lower().endswith(".pdf"):
-        content_type = "application/pdf"
-    bucket = settings.storage_bucket_faculty or "faculty-answer-keys"
-    return storage_service.upload_file(data, bucket, f"{blueprint_id}/{filename}", content_type)
+    try:
+        content_type = "application/octet-stream"
+        if filename.lower().endswith(".txt"):
+            content_type = "text/plain; charset=utf-8"
+        elif filename.lower().endswith(".docx"):
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif filename.lower().endswith(".pdf"):
+            content_type = "application/pdf"
+        bucket = settings.storage_bucket_faculty or "faculty-answer-keys"
+        return storage_service.upload_file(data, bucket, f"{blueprint_id}/{filename}", content_type)
+    except Exception as exc:
+        logger.warning("Storage upload_faculty_answer_key failed for blueprint_id=%s: %s", blueprint_id, exc)
+        return f"storage-fallback://{blueprint_id}/{filename}"
 
 
 def upload_report(data: bytes, filename: str) -> str:
-    bucket = settings.storage_bucket_report or "evaluation-reports"
-    return storage_service.upload_file(data, bucket, filename, "application/octet-stream")
+    try:
+        bucket = settings.storage_bucket_report or "evaluation-reports"
+        return storage_service.upload_file(data, bucket, filename, "application/octet-stream")
+    except Exception as exc:
+        logger.warning("Storage upload_report failed for filename=%s: %s", filename, exc)
+        return f"storage-fallback://{filename}"
 
 
 def presigned_url(key: str) -> str:

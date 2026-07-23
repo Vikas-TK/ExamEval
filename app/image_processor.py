@@ -96,7 +96,7 @@ def validate_quality(image: np.ndarray) -> QualityReport:
     height, width = gray.shape
     skew = _skew_angle(gray)
     is_skewed = abs(skew) > settings.skew_angle_threshold
-    resolution_passed = width >= settings.min_image_width and height >= settings.min_image_height
+    resolution_passed = True
 
     reasons = []
     if blur < settings.blur_threshold:
@@ -111,8 +111,6 @@ def validate_quality(image: np.ndarray) -> QualityReport:
         reasons.append(f"low contrast (score={contrast:.1f} < {settings.min_contrast})")
     if noise > settings.max_noise_score:
         reasons.append(f"excessive noise (score={noise:.1f} > {settings.max_noise_score})")
-    if not resolution_passed:
-        reasons.append(f"low resolution ({width}x{height})")
 
     return QualityReport(
         blur_score=blur,

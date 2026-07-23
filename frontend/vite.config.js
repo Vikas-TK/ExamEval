@@ -32,9 +32,16 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/evaluations': 'http://localhost:8000',
-      '/blueprints': 'http://localhost:8000',
-      '/health': 'http://localhost:8000'
+      // All API requests (/api/*) → FastAPI backend on :8000
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      // System health check
+      '/health': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     }
   }
 });

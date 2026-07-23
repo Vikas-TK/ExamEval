@@ -16,6 +16,13 @@ Target Python 3.10 – 3.12 (Python 3.14 is unsupported locally due to missing p
    ```bash
    pip install -r requirements.txt
    ```
+   > **Note for Local GOT-OCR 2.0 Execution & CI Runners**:
+   > To run local GOT-OCR 2.0 as the primary OCR engine, users and CI runners MUST install `requirements-got.txt` (or install PyTorch with CUDA support if running on GPU):
+   ```bash
+   pip install -r requirements-got.txt
+   ```
+   > **CUDA VRAM Management ($\le 8\text{ GB}$)**:
+   > The system automatically executes `torch.cuda.empty_cache()` inside the inference cleanup block to prevent GPU VRAM spikes under concurrent requests on consumer GPUs.
 3. Run Alembic migrations:
    ```bash
    alembic upgrade head
@@ -46,6 +53,9 @@ The database migrations run automatically via a dedicated `db-migrate` service b
 - `STORAGE_PROVIDER`: Storage abstraction target (`s3` or `supabase`).
 - `S3_BUCKET_NAME`: Target bucket name for uploaded answer sheets and blueprints.
 - `QWEN_API_BASE`: OpenAI-compatible API base URL for Qwen2.5-VL server (vLLM, DashScope, or Ollama).
+- `GOT_OCR_ENABLED`: Enable local GOT-OCR 2.0 (default `true`). GOT failures automatically fall back to Qwen, then local OCR.
+- `GOT_OCR_MODEL_NAME`: Hugging Face model name (default `stepfun-ai/GOT-OCR2_0`).
+- `GOT_OCR_DEVICE`: `auto`, `cpu`, or `cuda` (default `auto`).
 
 ## Storage Bucket Layout
 

@@ -42,7 +42,7 @@ export default function IngestionPage({ apiKey }) {
     if (apiKey) headers['x-api-key'] = apiKey;
 
     try {
-      const res = await axios.post('/evaluations', data, { headers });
+      const res = await axios.post('/api/evaluations', data, { headers });
       toast.success('Upload accepted! Identity anonymized & pipeline started.');
       setCurrentEvalId(res.data.evaluation_id);
       setPolling(true);
@@ -61,7 +61,7 @@ export default function IngestionPage({ apiKey }) {
         try {
           const headers = {};
           if (apiKey) headers['x-api-key'] = apiKey;
-          const res = await axios.get(`/evaluations/${currentEvalId}`, { headers });
+          const res = await axios.get(`/api/evaluations/${currentEvalId}`, { headers });
           setEvalData(res.data);
           if (['COMPLETED', 'NEEDS_REVIEW', 'FAILED'].includes(res.data.status)) {
             setPolling(false);
@@ -84,7 +84,7 @@ export default function IngestionPage({ apiKey }) {
     try {
       const headers = {};
       if (apiKey) headers['x-api-key'] = apiKey;
-      const res = await axios.get(`/evaluations/${currentEvalId}/transcript`, { headers });
+      const res = await axios.get(`/api/evaluations/${currentEvalId}/transcript`, { headers });
       if (res.data?.url) {
         window.open(res.data.url, '_blank');
       }

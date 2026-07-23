@@ -52,20 +52,37 @@ async def submit_evaluation(
         semester=semester,
         subject_id=subject_id,
     )
-    db.add(identity)
-
-    # Everything downstream only ever sees evaluation_id + subject_id.
-    record = EvaluationRecord(
-        evaluation_id=evaluation_id,
-        subject_id=subject_id,
-        status=EvaluationStatus.PROCESSING,
-    )
     try:
+        # Commit StudentIdentity first so the parent FK row is durably present
+        # before we insert EvaluationRecord.  Without a SQLAlchemy relationship()
+        # between the two models the ORM cannot guarantee INSERT ordering during a
+        # single commit's implicit flush, which causes a FK violation on PostgreSQL.
+        db.add(identity)
+        db.commit()  # parent row is now visible to any subsequent INSERT on this connection
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(503, f"Could not create evaluation: {exc}") from exc
+
+    try:
+        # Everything downstream only ever sees evaluation_id + subject_id.
+        record = EvaluationRecord(
+            evaluation_id=evaluation_id,
+            subject_id=subject_id,
+            status=EvaluationStatus.PROCESSING,
+        )
         db.add(record)
         db.commit()
     except Exception as exc:
         db.rollback()
-        raise HTTPException(503, "Could not create evaluation") from exc
+        # Best-effort cleanup: remove the orphaned StudentIdentity row so the
+        # evaluation_id doesn't linger without a corresponding EvaluationRecord.
+        try:
+            db.delete(identity)
+            db.commit()
+        except Exception:
+            db.rollback()
+        raise HTTPException(503, f"Could not create evaluation: {exc}") from exc
+
 
     background_tasks.add_task(
         process_evaluation,
@@ -75,6 +92,34 @@ async def submit_evaluation(
     )
 
     return IngestResponse(evaluation_id=evaluation_id, status="PROCESSING")
+
+
+@router.get("", tags=["evaluations"])
+def list_evaluations(
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db),
+):
+    """List all evaluation records (newest first). No auth required for UI dropdowns."""
+    records = (
+        db.query(EvaluationRecord)
+        .order_by(EvaluationRecord.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    items = [
+        {
+            "evaluation_id": str(r.evaluation_id),
+            "subject_id": r.subject_id,
+            "status": r.status.value if r.status else "UNKNOWN",
+            "overall_confidence": r.overall_confidence,
+            "needs_manual_review": r.needs_manual_review,
+            "created_at": str(r.created_at) if r.created_at else None,
+        }
+        for r in records
+    ]
+    return {"items": items, "page": page, "page_size": page_size}
 
 
 @router.get("/manual-review", response_model=ManualReviewListResponse)
@@ -109,7 +154,11 @@ def list_manual_reviews(
         ocr_data = OCRData(**r.ocr_data) if r.ocr_data else None
         
         def signed(url: str | None) -> str | None:
-            return presigned_url(url.split("/", 3)[-1]) if url else None
+            if not url:
+                return None
+            if url.startswith("storage-fallback://") or url.startswith("http://") or url.startswith("https://"):
+                return url
+            return presigned_url(url.split("/", 3)[-1])
 
         items.append(
             ManualReviewItem(
@@ -161,7 +210,11 @@ def get_evaluation(
     ocr_data = OCRData(**record.ocr_data) if record.ocr_data else None
 
     def signed(url: str | None) -> str | None:
-        return presigned_url(url.split("/", 3)[-1]) if url else None
+        if not url:
+            return None
+        if url.startswith("storage-fallback://") or url.startswith("http://") or url.startswith("https://"):
+            return url
+        return presigned_url(url.split("/", 3)[-1])
 
     return EvaluationRecordOut(
         evaluation_id=record.evaluation_id,
@@ -174,7 +227,7 @@ def get_evaluation(
                    transcript=signed(record.transcript_s3_url)),
         overall_confidence=record.overall_confidence,
         needs_manual_review=record.needs_manual_review,
-        error_message=record.error_message if record.status == EvaluationStatus.FAILED else None,
+        error_message=record.error_message,
     )
 
 

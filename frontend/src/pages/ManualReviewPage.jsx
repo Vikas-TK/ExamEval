@@ -13,7 +13,7 @@ export default function ManualReviewPage({ apiKey }) {
     try {
       const headers = {};
       if (apiKey) headers['x-api-key'] = apiKey;
-      const res = await axios.get('/evaluations/manual-review', { headers });
+      const res = await axios.get('/api/evaluations/manual-review', { headers });
       setItems(res.data.items || []);
     } catch (err) {
       console.error(err);
@@ -32,7 +32,7 @@ export default function ManualReviewPage({ apiKey }) {
       const headers = {};
       if (apiKey) headers['x-api-key'] = apiKey;
       const notes = notesMap[evaluationId] || '';
-      await axios.post(`/evaluations/${evaluationId}/review`, { action, notes }, { headers });
+      await axios.post(`/api/evaluations/${evaluationId}/review`, { action, notes }, { headers });
       toast.success(`Evaluation ${action}d successfully`);
       fetchItems();
     } catch (err) {

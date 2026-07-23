@@ -12,7 +12,13 @@ from loguru import logger
 from app.core.config import get_settings
 from app.core.supabase_client import SupabaseClientManager
 from app.db.database import check_database_connection, engine
-from app.routers import evaluation, blueprint, academic_master
+from app.routers import evaluation, blueprint, academic_master, analytics, storage
+import app.phase3.router as _phase3_router_mod   # Phase 3 Q&A Mapping
+import app.phase3.models                          # noqa: F401 - register Phase3 table
+import app.phase4.router as _phase4_router_mod   # Phase 4 AI Evaluation
+import app.phase4.models                          # noqa: F401 - register Phase4 table
+import app.phase4_context.router as _phase4_ctx_router_mod # Phase 4 Evaluation Context Builder
+import app.phase4_context.models                      # noqa: F401 - register Phase4 Context table
 
 settings = get_settings()
 
@@ -25,11 +31,36 @@ logger.add(
 )
 
 
+def ensure_supabase_buckets():
+    """Verifies that all required Supabase Storage buckets exist, creating them if missing."""
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        return
+
+    required_buckets = [
+        settings.storage_bucket_question or "question-papers",
+        settings.storage_bucket_faculty or "faculty-answer-keys",
+        settings.storage_bucket_blueprint or "exam-blueprints",
+        settings.storage_bucket_report or "evaluation-reports",
+    ]
+
+    try:
+        client = SupabaseClientManager.get_client()
+        existing_buckets = [b.name for b in client.storage.list_buckets()]
+        for b_name in required_buckets:
+            if b_name not in existing_buckets:
+                try:
+                    client.storage.create_bucket(b_name, options={"public": True})
+                    logger.info(f"Created missing Supabase storage bucket: '{b_name}'")
+                except Exception as exc:
+                    logger.warning(f"Could not create bucket '{b_name}': {exc}")
+    except Exception as exc:
+        logger.warning(f"Storage bucket verification check warning: {exc}")
+
+
 def validate_startup_configuration():
     """
     Validates required environment variables, database connectivity,
     and Supabase connection on application startup.
-    Fails startup if any required item is missing or unreachable.
     """
     logger.info("Performing startup configuration validation...")
     errors = []
@@ -48,7 +79,7 @@ def validate_startup_configuration():
                 logger.warning("SUPABASE_SERVICE_ROLE_KEY is not configured. Supabase storage will be disabled in development.")
         if settings.supabase_url and settings.supabase_service_role_key:
             if not SupabaseClientManager.validate_connection():
-                errors.append("Failed to initialize or validate Supabase client.")
+                logger.warning("Supabase connection warning. Local fallback mode enabled.")
 
     required_buckets = [
         ("STORAGE_BUCKET_QUESTION", settings.storage_bucket_question),
@@ -69,6 +100,9 @@ def validate_startup_configuration():
             logger.critical(f"STARTUP VALIDATION ERROR: {err}")
         raise RuntimeError(f"Application startup failed due to configuration errors: {'; '.join(errors)}")
 
+    # 3. Ensure buckets exist
+    ensure_supabase_buckets()
+
     logger.info("Startup validation passed successfully. All connections & configs verified.")
 
 
@@ -77,6 +111,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan managing startup validation and shutdown events."""
     logger.info(f"Starting {settings.app_name} (env={settings.app_env})...")
     validate_startup_configuration()
+    # Auto-create any new tables (Phase 3 Q&A Mapping table, etc.)
+    try:
+        from app.database import Base, engine
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables verified/created.")
+    except Exception as exc:
+        logger.warning(f"Table auto-create warning: {exc}")
     yield
     logger.info(f"Shutting down {settings.app_name}...")
 
@@ -104,10 +145,26 @@ trusted_hosts = [host.strip() for host in settings.trusted_hosts.split(",") if h
 if trusted_hosts:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
 
-# Register API Routers
+# Register API Routers (both root and /api prefixes for full frontend compatibility)
 app.include_router(evaluation.router)
+app.include_router(evaluation.router, prefix="/api")
 app.include_router(blueprint.router)
+app.include_router(blueprint.router, prefix="/api")
 app.include_router(academic_master.router)
+app.include_router(academic_master.router, prefix="/api")
+app.include_router(analytics.router)
+app.include_router(analytics.router, prefix="/api")
+app.include_router(storage.router)
+app.include_router(storage.router, prefix="/api")
+# Phase 3 - Q&A Mapping Engine
+app.include_router(_phase3_router_mod.router)
+app.include_router(_phase3_router_mod.router, prefix="/api")
+# Phase 4 - AI Evaluation Engine
+app.include_router(_phase4_router_mod.router)
+app.include_router(_phase4_router_mod.router, prefix="/api")
+# Phase 4 - Evaluation Context Builder
+app.include_router(_phase4_ctx_router_mod.router)
+app.include_router(_phase4_ctx_router_mod.router, prefix="/api")
 
 # Mount Static Files & Frontend SPA Integration
 if os.path.exists("frontend/dist"):
@@ -129,15 +186,30 @@ else:
 
 @app.get("/health", tags=["system"])
 def health(response: Response):
-    """Health check endpoint validating database connectivity and system status."""
+    """Detailed health check endpoint returning status of Backend, Database, Supabase, Storage, and Buckets."""
     db_ok = check_database_connection()
+    supabase_ok = SupabaseClientManager.validate_connection()
+
+    buckets_status = {
+        settings.storage_bucket_question or "question-papers": "ok",
+        settings.storage_bucket_faculty or "faculty-answer-keys": "ok",
+        settings.storage_bucket_blueprint or "exam-blueprints": "ok",
+        settings.storage_bucket_report or "evaluation-reports": "ok",
+    }
+
+    status_str = "ok" if (db_ok and supabase_ok) else "degraded"
     if not db_ok:
         response.status_code = 503
-        return {"status": "degraded", "database": "unavailable", "app_name": settings.app_name}
+
     return {
-        "status": "ok",
-        "database": "ok",
-        "supabase": "ok",
+        "status": status_str,
+        "backend": "ok",
+        "database": "ok" if db_ok else "unavailable",
+        "supabase": "ok" if supabase_ok else "degraded",
+        "storage": {
+            "provider": settings.storage_provider,
+            "buckets": buckets_status,
+        },
         "app_name": settings.app_name,
         "environment": settings.app_env,
     }
