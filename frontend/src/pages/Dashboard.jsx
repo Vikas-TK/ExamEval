@@ -12,15 +12,15 @@ export default function Dashboard() {
         description="AI-Based Automated Answer Script Evaluation & Blueprint Platform."
       />
 
-      {/* MINIMALIST TEXT WELCOME HERO */}
+      {/* CLEAN WHITE BACKGROUND WELCOME CARD WITH DARK TEXT */}
       <div
         style={{
-          borderRadius: '1rem',
-          background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
-          boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.15)',
-          border: '1px solid #334155',
-          padding: '3rem 2.5rem',
-          color: '#ffffff',
+          borderRadius: '0.75rem',
+          background: '#ffffff',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)',
+          border: '1px solid #e2e8f0',
+          padding: '2.5rem',
+          color: '#0f172a',
         }}
       >
         <div
@@ -28,9 +28,9 @@ export default function Dashboard() {
             display: 'inline-flex',
             alignItems: 'center',
             gap: '0.5rem',
-            background: 'rgba(16, 185, 129, 0.15)',
-            border: '1px solid #10b981',
-            color: '#34d399',
+            background: '#ecfdf5',
+            border: '1px solid #a7f3d0',
+            color: '#047857',
             padding: '0.35rem 0.85rem',
             borderRadius: '9999px',
             fontSize: '0.85rem',
@@ -43,11 +43,11 @@ export default function Dashboard() {
 
         <h1
           style={{
-            fontSize: '2.5rem',
+            fontSize: '2.25rem',
             fontWeight: 800,
-            margin: '0 0 1rem 0',
+            margin: '0 0 0.85rem 0',
             letterSpacing: '-0.025em',
-            color: '#f8fafc',
+            color: '#0f172a',
             lineHeight: 1.2,
           }}
         >
@@ -56,10 +56,10 @@ export default function Dashboard() {
 
         <p
           style={{
-            fontSize: '1.125rem',
-            color: '#94a3b8',
-            maxWidth: '720px',
-            margin: '0 0 2.5rem 0',
+            fontSize: '1.1rem',
+            color: '#475569',
+            maxWidth: '740px',
+            margin: '0 0 2.25rem 0',
             lineHeight: 1.6,
           }}
         >
@@ -76,18 +76,19 @@ export default function Dashboard() {
               gap: '1rem',
               padding: '1.25rem',
               borderRadius: '0.75rem',
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              color: '#ffffff',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              color: '#0f172a',
               textDecoration: 'none',
+              transition: 'all 0.15s ease',
             }}
           >
             <div style={{ width: '40px', height: '40px', borderRadius: '0.5rem', background: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
               <UploadCloud size={20} />
             </div>
             <div style={{ flex: 1 }}>
-              <strong style={{ display: 'block', fontSize: '0.95rem' }}>Evaluate Papers</strong>
-              <small style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Upload student answer scripts</small>
+              <strong style={{ display: 'block', fontSize: '0.95rem', color: '#0f172a' }}>Evaluate Papers</strong>
+              <small style={{ color: '#64748b', fontSize: '0.8rem' }}>Upload student answer scripts</small>
             </div>
             <ArrowRight size={16} style={{ color: '#94a3b8' }} />
           </Link>
@@ -100,18 +101,19 @@ export default function Dashboard() {
               gap: '1rem',
               padding: '1.25rem',
               borderRadius: '0.75rem',
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              color: '#ffffff',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              color: '#0f172a',
               textDecoration: 'none',
+              transition: 'all 0.15s ease',
             }}
           >
             <div style={{ width: '40px', height: '40px', borderRadius: '0.5rem', background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
               <BookOpen size={20} />
             </div>
             <div style={{ flex: 1 }}>
-              <strong style={{ display: 'block', fontSize: '0.95rem' }}>Question Papers</strong>
-              <small style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Build & edit blueprints</small>
+              <strong style={{ display: 'block', fontSize: '0.95rem', color: '#0f172a' }}>Question Papers</strong>
+              <small style={{ color: '#64748b', fontSize: '0.8rem' }}>Build & edit blueprints</small>
             </div>
             <ArrowRight size={16} style={{ color: '#94a3b8' }} />
           </Link>
@@ -124,18 +126,19 @@ export default function Dashboard() {
               gap: '1rem',
               padding: '1.25rem',
               borderRadius: '0.75rem',
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              color: '#ffffff',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              color: '#0f172a',
               textDecoration: 'none',
+              transition: 'all 0.15s ease',
             }}
           >
             <div style={{ width: '40px', height: '40px', borderRadius: '0.5rem', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
               <CheckCircle2 size={20} />
             </div>
             <div style={{ flex: 1 }}>
-              <strong style={{ display: 'block', fontSize: '0.95rem' }}>Manual Review</strong>
-              <small style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Review review queues</small>
+              <strong style={{ display: 'block', fontSize: '0.95rem', color: '#0f172a' }}>Manual Review</strong>
+              <small style={{ color: '#64748b', fontSize: '0.8rem' }}>Review review queues</small>
             </div>
             <ArrowRight size={16} style={{ color: '#94a3b8' }} />
           </Link>
