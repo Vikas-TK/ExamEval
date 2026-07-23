@@ -22,10 +22,10 @@ settings = get_settings()
 #  Ordered from most explicit → least explicit.
 #  Each tuple: (pattern, normalized_prefix, base_confidence)
 _ANCHOR_PATTERNS: list[tuple[re.Pattern[str], float]] = [
-    # 1. "Q1", "Q.1", "Q 1", "Question 1", "Ans 1", "Answer 1", "Ans. 1"
-    (re.compile(r"(?i)(?:^|\n)\s*(?:(?:Q(?:uestion)?|Ans(?:wer)?)\.?\s*)(\d+[a-z]?)\b", re.M), 0.95),
-    # 2. Line-start number with period, paren, colon, dash, asterisk, or space: "13.", "13)", "13:", "13 -", "13 *"
-    (re.compile(r"(?:^|\n)\s*(\d{1,3}[a-z]?)(?:[\.\):\-\s]|\s*\*)\s*(?=[a-zA-Z\*\(\[])", re.M), 0.90),
+    # 1. "Q1", "Q.1", "Q 1", "Question 1", "Ans 1", "Answer 1", "Ans. 1", "Q.13", "Q13"
+    (re.compile(r"(?i)(?:^|\n)\s*(?:Q(?:uestion)?|Ans(?:wer)?)\.?\s*(\d{1,3}[a-z]?)\b", re.M), 0.95),
+    # 2. Standalone line-start numbering: "1.", "1)", "1:", "1 -", "13.", "18.", "18.1"
+    (re.compile(r"(?:^|\n)\s*(\d{1,3}(?:\.\d{1,2})?[a-z]?)\s*[\.\):\-\s]\s*", re.M), 0.90),
     # 3. Sub-questions: (a), (b), 13(a), Q13(a)
     (re.compile(r"(?:^|\n)\s*(?:\d{1,3}\s*)?\(([a-z]|[ivx]+)\)\s+", re.M | re.I), 0.85),
     # 4. Part A / Section A
@@ -96,7 +96,8 @@ def _regex_detect(flat_text: str, page_map: list[tuple[int, int, int]]) -> list[
             if offset in seen_offsets:
                 continue
             seen_offsets.add(offset)
-            raw_label = match.group().strip()
+            target = match.group(1) if match.groups() and match.group(1) else match.group()
+            raw_label = target.strip()
             anchors.append(QuestionAnchor(
                 raw_label=raw_label,
                 normalized=_normalize_label(raw_label),

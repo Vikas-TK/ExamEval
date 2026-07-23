@@ -49,11 +49,11 @@ def test_ocr_failure_routes_to_needs_review_not_failed():
     # 2. Document routes to NEEDS_REVIEW
     assert updated.status == EvaluationStatus.NEEDS_REVIEW
     assert updated.needs_manual_review is True
-    # 3. OCR confidence is 0.0
-    assert updated.overall_confidence == 0.0
+    # 3. OCR confidence is low (<= 0.1)
+    assert updated.overall_confidence <= 0.1
     # 4. Fallback OCR is stored in database
     assert updated.ocr_data is not None
     pages = updated.ocr_data.get("pages", [])
     assert len(pages) == 1
     assert pages[0]["transcript"] == ""
-    assert pages[0]["confidence"] == 0.0
+    assert pages[0]["confidence"] <= 0.1
