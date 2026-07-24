@@ -118,6 +118,8 @@ def _llm_fallback_detect(flat_text: str) -> list[QuestionAnchor]:
         client = OpenAI(
             api_key=settings.qwen_api_key,
             base_url=settings.qwen_api_base,
+            timeout=30.0,
+            max_retries=1,
         )
         system = (
             "You are a question anchor detector. Given OCR text from a student answer script, "
@@ -203,5 +205,41 @@ def detect_anchors(
                     existing_labels.add(la.normalized)
             anchors.sort(key=lambda a: a.char_offset)
 
+    if not anchors:
+        logger.info("No labeled anchors found at all; falling back to paragraph-boundary segmentation.")
+        anchors = _paragraph_fallback_detect(flat_text)
+
     logger.info("Detected %d question anchors (avg_conf=%.2f).", len(anchors), avg_conf)
     return flat_text, page_map, anchors
+
+
+def _paragraph_fallback_detect(flat_text: str) -> list[QuestionAnchor]:
+    """
+    Last-resort segmentation when neither regex nor the LLM found any
+    question-number labels in the transcript (e.g. the model paraphrased
+    answers without preserving original numbering). Splits on blank-line
+    boundaries and treats each non-trivial paragraph as one answer block,
+    in document order. These anchors carry no real label — the mapper
+    matches them purely by sequence position against blueprint questions.
+    """
+    anchors: list[QuestionAnchor] = []
+    offset = 0
+    for para in re.split(r"\n\s*\n", flat_text):
+        stripped = para.strip()
+        if len(stripped) < 3 or _is_noise(stripped):
+            offset += len(para) + 2
+            continue
+        start = flat_text.find(para, offset)
+        if start == -1:
+            start = offset
+        anchors.append(QuestionAnchor(
+            raw_label="",
+            normalized="",
+            char_offset=start,
+            page_number=1,
+            confidence=0.5,
+            detection_method="paragraph_fallback",
+        ))
+        offset = start + len(para)
+
+    return anchors

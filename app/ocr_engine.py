@@ -16,6 +16,7 @@ import base64
 import json
 import logging
 import os
+import re
 import tempfile
 from typing import Any, Optional
 
@@ -33,8 +34,13 @@ try:
     openai_client = OpenAI(
         base_url=settings.qwen_api_base,
         api_key=settings.qwen_api_key or "not-needed",
-        timeout=60.0,
-        max_retries=2,
+        # A 16K-context vision call on CPU-bound hardware can legitimately
+        # take 2-3 minutes, especially on a cold/reloaded model — a 60s
+        # timeout was cutting these off before they could finish, forcing
+        # a fallback to much weaker OCR engines. max_retries=1 (not the
+        # default 2+) so a genuine failure doesn't triple this wait.
+        timeout=240.0,
+        max_retries=1,
     )
 except Exception as exc:
     logger.warning("Could not initialize OpenAI client in ocr_engine: %s", exc)
@@ -45,7 +51,7 @@ handwritten exam answer sheets. You must respond with ONLY valid JSON, no \
 markdown fences, no commentary. Schema:
 
 {
-  "transcript": "<full handwritten text, transcribed as faithfully as possible>",
+  "transcript": "<full handwritten text, transcribed VERBATIM>",
   "structure_map": {"<question_number>": "<answer text or summary>", ...},
   "confidence": <float 0.0-1.0, your own estimate of transcription reliability>,
   "visual_elements": [
@@ -54,21 +60,100 @@ markdown fences, no commentary. Schema:
   ]
 }
 
-Rules:
-- If handwriting is illegible in places, transcribe what you can and lower confidence accordingly.
+CRITICAL transcription rules — these directly determine whether a downstream
+system can correctly split this page back into separate answers, so follow
+them exactly:
+- Transcribe word-for-word, in the student's own words and phrasing. Do NOT
+  rephrase, summarize, "clean up", or substitute your own definition of a
+  term even if you recognize the topic — write only what is actually written
+  on the page, including any errors, crossed-out text (marked as struck-through
+  if legible), and incomplete sentences.
+- If a question number or label is written anywhere on the page (e.g. "1.",
+  "Q1", "Q.1)", "1)", "(a)"), reproduce it EXACTLY at the start of the line
+  where it appears in the transcript — never drop it, renumber it, or infer
+  one that isn't visibly written.
+- Preserve the original line breaks and paragraph breaks between answers —
+  insert a blank line between one answer and the next exactly where the
+  student's handwriting shows a visual gap (new question, new paragraph),
+  so each answer stays distinguishable in the transcript.
+- If handwriting is illegible in places, transcribe what you can and lower
+  confidence accordingly — never invent or guess at illegible words.
 - bbox coordinates are pixel coordinates in the given image.
 - Do not invent answers or content that is not visibly present.
 """
 
 
+_MAX_VISION_DIM = 1280
+
+
+def _downscale_for_vision(image_bytes: bytes) -> bytes:
+    """
+    Full-resolution phone/scanner captures (often 3000px+ on the long edge)
+    force the vision encoder to process far more image tokens than legible
+    OCR actually needs, which is the dominant cost on CPU-bound hardware —
+    independent of and in addition to the num_ctx text-token budget. Caps
+    the long edge at 1280px (comfortably enough for legible handwriting/
+    print) while preserving aspect ratio. Falls back to the original bytes
+    on any decode failure rather than blocking the OCR call over this.
+    """
+    try:
+        import io
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(image_bytes))
+        width, height = img.size
+        longest = max(width, height)
+        if longest > _MAX_VISION_DIM:
+            scale = _MAX_VISION_DIM / longest
+            new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+            img = img.resize(new_size, Image.LANCZOS)
+
+        # Always re-encode through PIL (even when no resize was needed) so
+        # the returned bytes are guaranteed to actually be JPEG — the
+        # caller labels them as image/jpeg regardless of the original
+        # upload format (PNG, HEIC, etc.).
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=88)
+        return buf.getvalue()
+    except Exception as exc:
+        logger.warning("Image downscale for vision OCR failed, using original bytes as-is: %s", exc)
+        return image_bytes
+
+
 def _encode_image(image_bytes: bytes) -> str:
+    image_bytes = _downscale_for_vision(image_bytes)
     b64 = base64.b64encode(image_bytes).decode("utf-8")
-    return f"data:image/png;base64,{b64}"
+    return f"data:image/jpeg;base64,{b64}"
 
 
 import io
 import os
 import shutil
+
+
+def _resegment_long_runs(text: str) -> str:
+    """
+    RapidOCR is line-level, not word-level — it occasionally drops spaces
+    entirely within a detected line ("SectionI: Eachquestioncarriers2marks").
+    Dictionary-based word segmentation recovers readable spacing.
+
+    Gated on the SPLIT RESULT rather than run length: wordninja returning a
+    single segment means it already believes the run is one real word (or
+    an acronym/code it can't decompose), so we leave it untouched — this
+    lets us safely check even short runs like "SectionI" without risking
+    corrupting genuinely correct short/long single words.
+    """
+    try:
+        import wordninja
+    except ImportError:
+        return text
+
+    def resplit(match: "re.Match[str]") -> str:
+        run = match.group(0)
+        pieces = wordninja.split(run)
+        return " ".join(pieces) if len(pieces) > 1 else run
+
+    return re.sub(r"[A-Za-z]{5,}", resplit, text)
 
 
 def _find_tesseract_binary() -> Optional[str]:
@@ -118,6 +203,7 @@ def _fallback_page(image_bytes: bytes, page_number: int, reason: str) -> tuple[O
             if words:
                 from app.ocr_corrector import correct_ocr_text
                 transcript = correct_ocr_text("\n".join(words))
+                transcript = _resegment_long_runs(transcript)
                 confidence = (sum(scores) / len(scores)) if scores else 0.85
                 return OCRPage(
                     page_number=page_number,
@@ -296,7 +382,18 @@ def _extract_qwen_page(image_bytes: bytes, page_number: int, evaluation_id: Opti
                 },
             ],
             temperature=0.0,
-            max_tokens=4096,
+            # 4096 was letting the model believe it could generate an
+            # enormous response, and generation time on CPU-bound hardware
+            # scales with output length — this was compounding with the
+            # image-encoding cost to blow past any reasonable timeout.
+            # 2048 comfortably covers a single dense page's transcript +
+            # structured JSON while cutting worst-case generation time.
+            max_tokens=2048,
+            # No num_ctx override here: qwen2.5vl-8k has it baked in via
+            # Modelfile. A per-request override would take precedence over
+            # that and silently push it back up to the heavier 16384,
+            # which this GPU's 4GB VRAM can't comfortably absorb for a
+            # vision request — that's what caused the multi-minute stalls.
         )
         content = response.choices[0].message.content
         raw = content.strip() if isinstance(content, str) else ""

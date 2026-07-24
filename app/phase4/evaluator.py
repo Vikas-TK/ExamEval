@@ -1,7 +1,7 @@
 """
 Phase 4 – AI Evaluator
 
-Uses Qwen2.5-7B (via Ollama) to score each student answer.
+Uses a local Qwen model (via Ollama) to score each student answer.
 No fixed rubric — model judges relevance, completeness, correctness.
 Optional answer key is provided as guidance context only.
 """
@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from app.core.config import get_settings
 from app.phase4.schemas import ScoringResult
@@ -17,10 +16,65 @@ from app.phase4.schemas import ScoringResult
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-_SYSTEM_PROMPT = """You are an expert university exam evaluator.
-Score the student's answer to the given question.
-Be fair, consistent, and reward genuine understanding even if phrasing differs from a reference answer.
-Always return a valid JSON object and nothing else."""
+# ─── Persona inference ─────────────────────────────────────────────────────────
+# Grading with a subject-matter-expert persona ("You are a senior software
+# engineer...") rather than a generic "exam evaluator" measurably improves
+# how well the model recognizes domain-correct answers phrased differently
+# from a reference key. Keyword-matched against the question text first
+# (cheap, no extra model call, no added latency) since a single exam can mix
+# topics; falls back to the blueprint's subject when no keyword hits.
+_PERSONA_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
+    (("scrum", "agile", "waterfall", "sdlc", "software process", "requirement",
+      "use case", "uml", "software engineering", "reengineering", "testing",
+      "black-box", "white-box", "backlog", "software development"),
+     "You are a senior software engineer and software architect"),
+    (("algorithm", "data structure", "sorting", "tree", "graph", "linked list",
+      "complexity", "recursion", "stack", "queue", "hashing"),
+     "You are an expert in algorithms and data structures"),
+    (("sql", "database", "dbms", "normalization", "transaction", "query",
+      "schema", "relational"),
+     "You are a senior database engineer"),
+    (("network", "tcp", "udp", "osi", "router", "protocol", "ip address",
+      "socket", "bandwidth"),
+     "You are a computer networks engineer"),
+    (("operating system", "process", "thread", "deadlock", "scheduling",
+      "memory management", "kernel", "semaphore", "paging"),
+     "You are an operating systems engineer"),
+    (("cloud", "kubernetes", "docker", "microservice", "distributed system",
+      "aws", "azure", "container", "load balanc"),
+     "You are a cloud solutions architect"),
+    (("machine learning", "neural network", "model training", "dataset",
+      "regression", "classification", "deep learning", "ai model"),
+     "You are a machine learning engineer"),
+    (("python", "programming", "function", "variable", "loop", "syntax",
+      "code", "compile", "debug"),
+     "You are a senior software developer"),
+]
+
+
+def _infer_persona(question_text: str | None, subject: str | None) -> str:
+    text = (question_text or "").lower()
+    for keywords, persona in _PERSONA_KEYWORDS:
+        if any(kw in text for kw in keywords):
+            return persona
+    if subject:
+        return f"You are a subject-matter expert in {subject}"
+    return "You are an expert university exam evaluator"
+
+
+def _build_system_prompt(persona: str) -> str:
+    return (
+        f"{persona}, evaluating a student's exam answer. "
+        "Be fair and reward genuine understanding even if phrasing differs from a "
+        "reference answer or uses different but equivalent terminology. "
+        "When an answer captures the core concept correctly, give the student the "
+        "benefit of the doubt on minor omissions, imperfect wording, or incomplete "
+        "elaboration — lean toward the higher of two plausible scores rather than "
+        "the lower one. Only award a low score when the answer is genuinely "
+        "incorrect, off-topic, or left blank. "
+        "Scores MUST be whole numbers only — no decimals, no fractions. "
+        "Always return a valid JSON object and nothing else."
+    )
 
 
 def _build_prompt(
@@ -34,7 +88,7 @@ def _build_prompt(
     parts = [
         f"Question: {question_text}",
         f"Question Type: {question_type or 'Descriptive'}",
-        f"Maximum Marks: {maximum_marks}",
+        f"Maximum Marks: {int(maximum_marks)}",
     ]
     if answer_key:
         parts.append(f"Reference Answer (use as guidance, not rigid match): {answer_key}")
@@ -42,9 +96,9 @@ def _build_prompt(
     if has_visual:
         parts.append("Note: Student's answer included diagrams/visual elements (already noted in answer text).")
     parts.append(
-        f'\nScore the student answer from 0 to {maximum_marks} (decimals allowed).\n'
+        f'\nScore the student answer as a WHOLE NUMBER from 0 to {int(maximum_marks)} — decimals are not allowed.\n'
         f'Return ONLY this JSON:\n'
-        f'{{"score": <float>, "feedback": "<1-2 sentence explanation for faculty>", "confidence": <0.0-1.0>}}'
+        f'{{"score": <integer>, "feedback": "<1-2 sentence explanation for faculty>", "confidence": <0.0-1.0>}}'
     )
     return "\n".join(parts)
 
@@ -56,10 +110,11 @@ def score_answer(
     answer_key: str | None = None,
     question_type: str | None = None,
     has_visual: bool = False,
+    subject: str | None = None,
 ) -> ScoringResult:
     """
-    Score a single student answer using Qwen2.5-7B.
-    Returns ScoringResult(score, feedback, confidence).
+    Score a single student answer using the locally configured Qwen model.
+    Returns ScoringResult(score, feedback, confidence) with an integer score.
     Falls back to 0 marks with error message if LLM fails.
     """
     # Skip if no answer at all
@@ -73,25 +128,31 @@ def score_answer(
     if not question_text:
         question_text = "Unnamed question"
 
+    persona = _infer_persona(question_text, subject)
+    system_prompt = _build_system_prompt(persona)
     prompt = _build_prompt(
         question_text, student_answer, maximum_marks,
         answer_key, question_type, has_visual
     )
 
+    raw = "{}"
     try:
         from openai import OpenAI
         client = OpenAI(
             api_key=settings.qwen_api_key,
             base_url=settings.qwen_api_base,
+            timeout=30.0,
+            max_retries=1,
         )
         response = client.chat.completions.create(
-            model=settings.llm_model,
+            model=settings.evaluation_llm_model,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
             max_tokens=256,
+            extra_body={"options": {"num_ctx": settings.qwen_num_ctx}},
         )
         raw = (response.choices[0].message.content or "{}").strip()
         # Strip markdown code fences if present
@@ -100,11 +161,11 @@ def score_answer(
             raw = raw.rstrip("`").strip()
 
         data = json.loads(raw)
-        score = float(data.get("score", 0.0))
-        # Clamp score to [0, maximum_marks]
-        score = max(0.0, min(score, maximum_marks))
+        score = round(float(data.get("score", 0.0)))
+        # Clamp score to [0, maximum_marks], still an integer
+        score = max(0, min(score, int(maximum_marks)))
         return ScoringResult(
-            score=round(score, 2),
+            score=float(score),
             feedback=str(data.get("feedback", "")),
             confidence=float(data.get("confidence", 0.8)),
         )

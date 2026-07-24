@@ -121,6 +121,14 @@ class Phase3Service:
             per_q_val[mqa.question_id] = (mqa.validation_status, [], [])
 
         # Step 7: Store
+        # Re-mapping the same evaluation against a different blueprint (e.g.
+        # a corrected re-extraction) must REPLACE the old mapping, not add
+        # to it — the upsert key is (evaluation_id, question_id), and a
+        # different blueprint produces different question_ids, so without
+        # this the old blueprint's rows become orphaned and get returned
+        # alongside the new ones by get_by_evaluation() (which only filters
+        # on evaluation_id), interleaving two runs' worth of questions.
+        self._repo.delete_by_evaluation_excluding_blueprint(evaluation_id, blueprint_id)
         self._repo.bulk_upsert(annotated_qas, report, per_q_val)
 
         return Phase3Response(

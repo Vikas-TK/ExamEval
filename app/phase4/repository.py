@@ -72,3 +72,26 @@ class EvaluationResultRepository:
         )
         self._db.commit()
         return count
+
+    def delete_by_evaluation_excluding_blueprint(
+        self, evaluation_id: uuid.UUID, blueprint_id: uuid.UUID
+    ) -> int:
+        """
+        Removes scored-answer rows left over from a PREVIOUS blueprint used
+        for this evaluation. Same reasoning as the Phase 3 mapping repo:
+        the upsert key is (evaluation_id, question_id), so re-scoring
+        against a different blueprint (different question_ids) leaves the
+        old blueprint's rows orphaned instead of replacing them, and
+        get_by_evaluation() — filtering on evaluation_id only — would
+        return both runs mixed together.
+        """
+        count = (
+            self._db.query(AnswerEvaluation)
+            .filter(
+                AnswerEvaluation.evaluation_id == evaluation_id,
+                AnswerEvaluation.blueprint_id != blueprint_id,
+            )
+            .delete()
+        )
+        self._db.commit()
+        return count

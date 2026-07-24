@@ -144,6 +144,7 @@ export default function EvaluationRunPage({ apiKey }) {
   const [result, setResult] = useState(null);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [notEvaluatedYet, setNotEvaluatedYet] = useState(false);
 
   const headers = apiKey ? { 'x-api-key': apiKey } : {};
 
@@ -157,9 +158,20 @@ export default function EvaluationRunPage({ apiKey }) {
   const fetchRecords = useCallback((eid) => {
     if (!eid) return;
     setLoading(true);
+    setNotEvaluatedYet(false);
     axios.get(`/api/evaluate/${eid}`, { headers })
       .then(r => setRecords(r.data || []))
-      .catch(() => setRecords([]))
+      .catch(err => {
+        setRecords([]);
+        if (err.response?.status === 404) {
+          // Phase 3 (mapping) has run but Phase 4 (AI scoring) hasn't been
+          // triggered for this evaluation yet — not an error, just needs
+          // "Run AI Evaluation" clicked.
+          setNotEvaluatedYet(true);
+        } else {
+          toast.error(err.response?.data?.detail || 'Failed to load scored answers');
+        }
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -345,6 +357,22 @@ export default function EvaluationRunPage({ apiKey }) {
               <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>{label}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Not yet evaluated: mapping ran, but AI scoring hasn't been triggered */}
+      {notEvaluatedYet && !loading && (
+        <div style={{
+          textAlign: 'center', padding: '40px 24px', color: '#64748b',
+          background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 14,
+        }}>
+          <Sparkles size={22} color="#94a3b8" style={{ marginBottom: 8 }} />
+          <div style={{ fontWeight: 700, color: '#334155', fontSize: 14 }}>
+            This script has been mapped but not yet AI-evaluated
+          </div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>
+            Click <strong>Run AI Evaluation</strong> above to score it.
+          </div>
         </div>
       )}
 

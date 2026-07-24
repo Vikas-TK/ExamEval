@@ -75,13 +75,15 @@ class Settings(BaseSettings):
     # --- Models ---
     qwen_api_base: str = "http://127.0.0.1:11434/v1"
     qwen_api_key: str = "ollama"
-    qwen_model_name: str = "qwen2.5vl:7b"
-    blueprint_qwen_model_name: str = "qwen2.5:3b-instruct"
+    qwen_model_name: str = "qwen2.5vl-16k"
+    blueprint_qwen_model_name: str = "qwen2.5:7b-instruct-q4_K_M"
     ocr_model: str = "qwen2.5vl:7b"
-    llm_model: str = "qwen2.5:3b-instruct"
+    llm_model: str = "qwen2.5:7b-instruct-q4_K_M"
+    evaluation_llm_model: str = "qwen2.5:3b-instruct"
     got_ocr_enabled: bool = True
     got_ocr_model_name: str = "stepfun-ai/GOT-OCR2_0"
     got_ocr_device: str = "auto"
+    qwen_num_ctx: int = 16384
 
     # --- Frontend Integration ---
     frontend_url: str = "http://localhost:3000"

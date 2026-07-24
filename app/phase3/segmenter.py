@@ -9,6 +9,7 @@ Never merges answers across different questions.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from app.phase3.schemas import AnswerBlock, QuestionAnchor
@@ -102,5 +103,65 @@ def segment_answers(
             page_numbers=sorted(set(page_numbers)),
         ))
 
+    blocks = _split_section_header_blocks(blocks)
+
     logger.info("Segmented %d answer blocks from %d anchors.", len(blocks), len(anchors))
     return blocks
+
+
+def _split_section_header_blocks(blocks: list[AnswerBlock]) -> list[AnswerBlock]:
+    """
+    Split a block into one sub-block per paragraph whenever it looks like it
+    swallowed more than one answer. Two distinct cases produce this:
+
+    1. A "Part A" / "Section A" anchor marks a section boundary, not a single
+       question — if no individual question numbers were written within that
+       section, everything up to the next anchor lands in one block. Here
+       EVERY paragraph is unlabeled (the section anchor isn't a real answer
+       to anything), left for the semantic/lexical content matcher.
+
+    2. A real question-numbered anchor (e.g. "5.") whose next 1-2 questions
+       lost their number to OCR/handwriting noise — the answer for Q5 keeps
+       absorbing Q6's and Q7's text until the next anchor it CAN detect
+       (e.g. "8."). Here the first paragraph genuinely is that question's
+       answer and keeps its label; only the extra trailing paragraphs are
+       unlabeled leftovers for content matching.
+    """
+    expanded: list[AnswerBlock] = []
+    for block in blocks:
+        norm = (block.anchor.normalized or "").upper()
+        is_section_header = norm.startswith("PART") or norm.startswith("SECTION")
+
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", block.raw_text) if p.strip()]
+        if len(paragraphs) <= 1:
+            expanded.append(block)
+            continue
+
+        start_idx = 0
+        if not is_section_header:
+            # Keep the first paragraph attached to the real anchor it was
+            # detected under — only the swallowed extras get unlabeled.
+            expanded.append(AnswerBlock(
+                anchor=block.anchor,
+                raw_text=paragraphs[0],
+                visual_elements=block.visual_elements,
+                page_numbers=block.page_numbers,
+            ))
+            start_idx = 1
+
+        for para in paragraphs[start_idx:]:
+            expanded.append(AnswerBlock(
+                anchor=QuestionAnchor(
+                    raw_label="",
+                    normalized="",
+                    char_offset=block.anchor.char_offset,
+                    page_number=block.anchor.page_number,
+                    confidence=0.5,
+                    detection_method="section_split",
+                ),
+                raw_text=para,
+                visual_elements=block.visual_elements,
+                page_numbers=block.page_numbers,
+            ))
+
+    return expanded

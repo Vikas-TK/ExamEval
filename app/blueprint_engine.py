@@ -169,8 +169,29 @@ def preprocess_ocr_text(text: str) -> str:
 
 
 _SECTION_HEADER_RE = re.compile(
-    r"(?im)^\s*(Part|Section)\s+([a-z0-9]+)\s*(?:[\-\:]\s*(\d+(?:\.\d+)?)\s*marks?)?.*$", re.I
+    r"(?m)^\s*((?i:Part|Section))\s*([IVXLCDM]{1,4}|[A-Z]|\d{1,2})(?![a-zA-Z])"
+    r"\s*(?:[\-\:]\s*(\d+(?:\.\d+)?)\s*marks?)?.*$"
 )
+
+
+def _find_per_question_marks(text: str) -> float | None:
+    """
+    Extract the PER-QUESTION mark value from a section header/instruction
+    line, distinguishing it from the section's total. A pattern like
+    "(7 x 4 = 28 marks)" states count x per-question = total — the value we
+    want is the per-question one (4), not the total that sits right next to
+    the word "marks" (28), which a naive "\\d+ marks" search would grab.
+    """
+    m = re.search(r"(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*=\s*\d+(?:\.\d+)?\s*marks?", text, re.I)
+    if m:
+        return float(m.group(2))
+    m = re.search(r"(\d+(?:\.\d+)?)\s*marks?\s*each\b", text, re.I)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"(\d+(?:\.\d+)?)\s*marks", text, re.I)
+    if m:
+        return float(m.group(1))
+    return None
 
 
 def _regex_sections(text: str) -> list[BlueprintSection]:
@@ -196,7 +217,10 @@ def _regex_sections(text: str) -> list[BlueprintSection]:
                 marks_found = current_section_marks
 
             cleaned = _clean_question(raw_combined)
-            if cleaned:
+            # Discard phantom questions: OCR noise sometimes produces a bare
+            # digit+bracket ("20)") with no real text behind it — a genuine
+            # question always has actual wording, not just punctuation.
+            if cleaned and re.search(r"[A-Za-z]{2,}", cleaned):
                 q_num_clean = str(current_q_no).strip()
                 if not q_num_clean.lower().startswith("q"):
                     q_num_clean = f"Q{q_num_clean}"
@@ -220,7 +244,7 @@ def _regex_sections(text: str) -> list[BlueprintSection]:
             ))
             current_questions.clear()
 
-    for line in lines:
+    for idx, line in enumerate(lines):
         sec_match = _SECTION_HEADER_RE.match(line)
         if sec_match:
             save_current_question()
@@ -235,8 +259,20 @@ def _regex_sections(text: str) -> list[BlueprintSection]:
             if sec_marks_str:
                 current_section_marks = float(sec_marks_str)
             else:
-                match_m = re.search(r"(\d+(?:\.\d+)?)\s*marks", line, re.I)
-                current_section_marks = float(match_m.group(1)) if match_m else 2.0
+                found_marks = _find_per_question_marks(line)
+                if found_marks is None:
+                    # Per-question marks weren't stated on the header line
+                    # itself — scan forward through any intro/instruction
+                    # lines (e.g. "Short answer type questions: (7 x 4 = 28
+                    # marks)" on its own line) but stop at the first real
+                    # question or the next section boundary.
+                    for lookahead in lines[idx + 1: idx + 6]:
+                        if _EXPLICIT_Q_START.match(lookahead) or _SECTION_HEADER_RE.match(lookahead):
+                            break
+                        found_marks = _find_per_question_marks(lookahead)
+                        if found_marks is not None:
+                            break
+                current_section_marks = found_marks if found_marks is not None else 2.0
             current_section_instructions = line.strip()
             continue
 
@@ -306,8 +342,46 @@ def _qwen_fallback(text: str) -> list[BlueprintSection]:
     return sections
 
 
+_FOOTER_MARKERS_RE = re.compile(
+    r"(?im)^.*(?:staff\s*i\s*/\s*c|\bIQAC\b|(?<![a-z])PAC(?![a-z])|course\s+outcome|"
+    r"CO\d+\s*:|cos?\s*/\s*level|levels?\s*:\s*understanding|bloom'?s?\s+taxonomy).*$"
+)
+
+
+def _strip_header_and_footer(text: str) -> str:
+    """
+    Institutional headers (college name, address, accreditation, date, reg
+    no) and footers (staff sign-off, CO/PO Bloom's-taxonomy mapping tables)
+    are packed with short numbers — dates, subject codes, pincodes — that
+    the question-number detector (preprocess_ocr_text) mistakes for real
+    question markers, slicing that noise into fake questions like "Q04."
+    from a date or "Q21." from a subject code. Truncating to just the exam
+    body — from the first real Part/Section heading through to the first
+    footer marker — removes the noise source instead of trying to out-guess
+    every possible false-positive number pattern within it.
+    """
+    body = text
+
+    header_match = _SECTION_HEADER_RE.search(body)
+    if not header_match:
+        # No formal "Part X" heading found; fall back to the generic
+        # "answer all/any questions" instruction as a weaker start signal.
+        instr_match = re.search(r"(?im)^.*answer\s+(?:all|any)\s+.*question.*$", body)
+        if instr_match:
+            body = body[instr_match.start():]
+    else:
+        body = body[header_match.start():]
+
+    footer_match = _FOOTER_MARKERS_RE.search(body)
+    if footer_match:
+        body = body[:footer_match.start()]
+
+    return body
+
+
 def extract_sections(ocr: dict[str, Any]) -> list[BlueprintSection]:
     text = _page_text(ocr)
+    text = _strip_header_and_footer(text)
     sections = _regex_sections(text)
     if sections:
         return sections

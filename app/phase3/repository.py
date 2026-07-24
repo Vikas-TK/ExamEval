@@ -155,3 +155,23 @@ class QAMappingRepository:
         )
         self._db.commit()
         return count
+
+    def delete_by_evaluation_excluding_blueprint(
+        self, evaluation_id: uuid.UUID, blueprint_id: uuid.UUID
+    ) -> int:
+        """
+        Removes any mapping rows left over from a PREVIOUS blueprint used
+        for this evaluation. An evaluation should only ever have mapping
+        rows from one blueprint at a time — re-mapping against a different
+        blueprint replaces the old result rather than accumulating both.
+        """
+        count = (
+            self._db.query(QuestionAnswerMapping)
+            .filter(
+                QuestionAnswerMapping.evaluation_id == evaluation_id,
+                QuestionAnswerMapping.blueprint_id != blueprint_id,
+            )
+            .delete()
+        )
+        self._db.commit()
+        return count

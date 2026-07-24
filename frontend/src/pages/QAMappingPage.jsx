@@ -73,7 +73,9 @@ function QACard({ record, index }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 800, color: '#0f172a', fontSize: 15 }}>
-              Q{record.question_number}
+              {String(record.question_number || '').toUpperCase().startsWith('Q')
+                ? record.question_number
+                : `Q${record.question_number}`}
             </span>
             {record.section_name && (
               <span style={{

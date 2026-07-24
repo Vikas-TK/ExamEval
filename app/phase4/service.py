@@ -48,6 +48,34 @@ class Phase4Service:
             return identity.student_hash[:12]
         return str(evaluation_id)[:8]
 
+    def _section_choose_counts(self, blueprint: ExamBlueprint) -> dict[str, int]:
+        """section_name -> how many of that section's questions actually
+        count, for 'answer any N of M' sections (declared via choose_count
+        on the section). Sections without it are fully mandatory."""
+        return {
+            section["name"]: int(section["choose_count"])
+            for section in (blueprint.sections or [])
+            if section.get("choose_count")
+        }
+
+    def _fixed_max_marks(self, blueprint: ExamBlueprint) -> float:
+        """
+        The exam's true achievable maximum, independent of what any one
+        student attempted. For a choice section ('answer any 2 of 3'), only
+        choose_count questions' worth of marks ever count toward the total
+        — not all M candidates — even if nobody attempted the extra ones.
+        """
+        total = 0.0
+        for section in blueprint.sections or []:
+            questions = section.get("questions", [])
+            choose_count = section.get("choose_count")
+            if choose_count and questions:
+                per_question = float(questions[0].get("maximum_marks", 0))
+                total += int(choose_count) * per_question
+            else:
+                total += sum(float(q.get("maximum_marks", 0)) for q in questions)
+        return total
+
     def _get_answer_key_map(self, blueprint: ExamBlueprint) -> dict[str, str]:
         """Returns question_id → answer_key text from faculty_answer_key field."""
         if not blueprint.faculty_answer_key:
@@ -89,10 +117,12 @@ class Phase4Service:
 
         answer_key_map = self._get_answer_key_map(blueprint)
         student_display = self._get_student_display(evaluation_id)
+        choose_counts = self._section_choose_counts(blueprint)
+        section_attempted_seen: dict[str, int] = {}
 
         results: list[AnswerEvaluation] = []
         total_scored = 0.0
-        total_max = 0.0
+        total_max = self._fixed_max_marks(blueprint)
         questions_evaluated = 0
 
         for qa in qa_records:
@@ -101,11 +131,36 @@ class Phase4Service:
                 answer_key = answer_key_map.get(qa.question_id) or answer_key_map.get(qa.question_number)
                 has_visual = bool(qa.visual_elements)
 
+                # "Answer any N of M" sections: qa_records are already in
+                # paper order (question_sequence), so the Nth attempted
+                # question here really is the Nth one the student attempted
+                # on the page. Anything attempted beyond the section's
+                # choose_count is excess — it doesn't count toward the
+                # total, and skipping the AI call for it also avoids
+                # burning more of this hardware's very limited time on a
+                # question that can never be scored anyway.
+                is_excess = False
+                if not is_skipped:
+                    limit = choose_counts.get(qa.section_name)
+                    if limit is not None:
+                        seen = section_attempted_seen.get(qa.section_name, 0) + 1
+                        section_attempted_seen[qa.section_name] = seen
+                        is_excess = seen > limit
+
                 if is_skipped:
                     scored = 0.0
                     feedback = "Student did not attempt this question."
                     confidence = 1.0
                     status = "SKIPPED"
+                elif is_excess:
+                    scored = 0.0
+                    feedback = (
+                        f"Not counted — {qa.section_name} allows only the first "
+                        f"{choose_counts[qa.section_name]} attempted questions to be scored, "
+                        "and this was attempted beyond that limit."
+                    )
+                    confidence = 1.0
+                    status = "EXCESS_ATTEMPT"
                 else:
                     result = score_answer(
                         question_text=qa.question_text,
@@ -114,6 +169,7 @@ class Phase4Service:
                         answer_key=answer_key,
                         question_type=qa.question_type,
                         has_visual=has_visual,
+                        subject=blueprint.subject,
                     )
                     scored = result.score
                     feedback = result.feedback
@@ -122,7 +178,6 @@ class Phase4Service:
                     questions_evaluated += 1
 
                 total_scored += scored
-                total_max += qa.maximum_marks or 0.0
 
                 results.append(AnswerEvaluation(
                     evaluation_id=evaluation_id,
@@ -161,6 +216,7 @@ class Phase4Service:
                     evaluation_status="ERROR",
                 ))
 
+        self._repo.delete_by_evaluation_excluding_blueprint(evaluation_id, blueprint_id)
         self._repo.bulk_upsert(results)
         percentage = round((total_scored / total_max * 100) if total_max > 0 else 0.0, 2)
 
