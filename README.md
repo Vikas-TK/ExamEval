@@ -49,7 +49,6 @@ The database migrations run automatically via a dedicated `db-migrate` service b
 ## Key Environment Variables
 
 - `DATABASE_URL`: PostgreSQL connection string (Supabase or local Postgres).
-- `IDENTITY_HASH_SECRET`: Salt key for keyed SHA-256 HMAC student identity hashing.
 - `STORAGE_PROVIDER`: Storage abstraction target (`s3` or `supabase`).
 - `S3_BUCKET_NAME`: Target bucket name for uploaded answer sheets and blueprints.
 - `QWEN_API_BASE`: OpenAI-compatible API base URL for Qwen2.5-VL server (vLLM, DashScope, or Ollama).

@@ -8,7 +8,6 @@ from PIL import Image, ImageDraw, ImageFont
 from app.main import app
 from app.models import EvaluationRecord, StudentIdentity
 from app.blueprint_models import ExamBlueprint
-from app.security import student_hash
 
 def create_sample_image():
     # 1000x1200 paper sheet with realistic background and text lines for OpenCV quality gate
@@ -27,8 +26,6 @@ def create_sample_image():
     return buf.getvalue()
 
 def test_e2e_phase1_and_phase2_integration(db_session, monkeypatch):
-    monkeypatch.setenv("IDENTITY_HASH_SECRET", "e2e-secret-key-12345")
-    
     # Mock external Qwen2.5-VL API call to return valid structured OCR
     def mock_qwen_call(*args, **kwargs):
         class MockChoiceMessage:
@@ -76,11 +73,10 @@ def test_e2e_phase1_and_phase2_integration(db_session, monkeypatch):
     monkeypatch.setattr("app.pipeline.SessionLocal", lambda: db_session)
     process_evaluation(uuid.UUID(eval_id), img_bytes, "answersheet.png")
 
-    # Verify Zero-Trust Boundary in DB
+    # Verify student identity is isolated to StudentIdentity, stored as plain text
     identity_record = db_session.query(StudentIdentity).filter_by(evaluation_id=uuid.UUID(eval_id)).first()
     assert identity_record is not None
-    assert identity_record.student_hash == student_hash("312221104001")
-    assert not hasattr(identity_record, "register_number") or identity_record.register_number is None
+    assert identity_record.register_number == "312221104001"
 
     # Fetch updated evaluation status
     get_resp = client.get(f"/evaluations/{eval_id}")

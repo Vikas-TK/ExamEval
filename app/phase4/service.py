@@ -41,11 +41,7 @@ class Phase4Service:
             .first()
         )
         if identity:
-            # student_hash is stored; we return first 8 chars as display key.
-            # In production UI the frontend resolves this using the register_number
-            # that the faculty originally uploaded (stored in StudentIdentity.student_hash
-            # as hmac — not reversible here, so we show a unique short label).
-            return identity.student_hash[:12]
+            return identity.register_number
         return str(evaluation_id)[:8]
 
     def _section_choose_counts(self, blueprint: ExamBlueprint) -> dict[str, int]:

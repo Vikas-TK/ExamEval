@@ -2,13 +2,11 @@ import uuid
 from app.models import EvaluationRecord, EvaluationStatus, StudentIdentity
 
 def test_manual_review_workflow(db_session, monkeypatch):
-    monkeypatch.setenv("IDENTITY_HASH_SECRET", "test-secret")
-    
     # Create test identity and record needing manual review
     eval_id = uuid.uuid4()
     identity = StudentIdentity(
         evaluation_id=eval_id,
-        student_hash="test-hash-12345",
+        register_number="312221104099",
         regulation="R2021",
         semester="SEM-04",
         subject_id="CS8451"

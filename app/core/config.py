@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     # --- Security & Identity ---
     secret_key: str = "generate-a-long-random-secret"
     jwt_secret: str = "generate-a-long-random-secret"
-    identity_hash_secret: str = "generate-a-long-random-secret"
     api_key: str = ""
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60

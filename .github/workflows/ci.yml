@@ -28,9 +28,7 @@ jobs:
       - run: alembic upgrade head
         env:
           DATABASE_URL: postgresql+psycopg2://exam_eval:exam_eval@localhost:5432/exam_eval
-          IDENTITY_HASH_SECRET: ci-only-secret
       - run: ruff check .
       - run: pytest
         env:
           DATABASE_URL: postgresql+psycopg2://exam_eval:exam_eval@localhost:5432/exam_eval
-          IDENTITY_HASH_SECRET: ci-only-secret

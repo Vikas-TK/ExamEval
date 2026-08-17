@@ -22,7 +22,7 @@ def test_ocr_failure_routes_to_needs_review_not_failed():
     
     identity = StudentIdentity(
         evaluation_id=evaluation_id,
-        student_hash="test-student-hash",
+        register_number="312221104098",
         regulation="R20",
         semester="5",
         subject_id="CS101",
