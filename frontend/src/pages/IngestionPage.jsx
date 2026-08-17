@@ -116,7 +116,7 @@ export default function IngestionPage({ apiKey }) {
             Student Script Ingestion
           </h2>
           <p className="text-xs text-gray-500 mt-1">
-            Phase 1: Zero-trust student identity HMAC hashing, image quality gate, and Qwen2.5-VL OCR.
+            Phase 1: Student identity capture, image quality gate, and Qwen2.5-VL OCR.
           </p>
         </div>
 

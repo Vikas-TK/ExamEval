@@ -1,22 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
 import secrets
 
 from fastapi import Header, HTTPException, status
 
 from app.config import get_settings
-
-
-def student_hash(register_number: str) -> str:
-    value = register_number.strip()
-    if not value:
-        raise ValueError("register_number cannot be empty")
-    secret = get_settings().identity_hash_secret
-    if not secret:
-        raise RuntimeError("IDENTITY_HASH_SECRET must be configured")
-    return hmac.new(secret.encode(), value.casefold().encode(), hashlib.sha256).hexdigest()
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:

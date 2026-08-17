@@ -16,8 +16,7 @@ class EvaluationStatus(str, enum.Enum):
 
 class StudentIdentity(Base):
     """
-    ZERO-TRUST BOUNDARY.
-    This is the ONLY table that stores the keyed student identity hash.
+    This is the ONLY table that stores the student's register number.
     In production, lock this table down with a dedicated DB role that
     the pipeline/OCR/worker processes are NOT granted (least privilege) —
     only the ingestion endpoint and an audited admin role should read it.
@@ -25,7 +24,7 @@ class StudentIdentity(Base):
     __tablename__ = "student_identity"
 
     evaluation_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    student_hash = Column(String(64), nullable=False, index=True)
+    register_number = Column(String, nullable=False, index=True)
     regulation = Column(String, nullable=False)
     semester = Column(String, nullable=False)
     subject_id = Column(String, nullable=False)

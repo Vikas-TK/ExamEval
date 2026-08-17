@@ -51,7 +51,7 @@ def build_evaluation_context_service(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Evaluation ID '{evaluation_id}' not found in database.",
         )
-    student_id = student_record.hashed_register_number or f"STU-{str(evaluation_id)[:8]}"
+    student_id = student_record.register_number or f"STU-{str(evaluation_id)[:8]}"
 
     # Step 2: Validate Exam Blueprint ID
     blueprint = db.query(ExamBlueprint).filter_by(blueprint_id=blueprint_id).first()

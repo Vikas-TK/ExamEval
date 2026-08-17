@@ -1,6 +1,5 @@
 from app.blueprint_engine import extract_sections, validate_blueprint
 from app.blueprint_schemas import ExamMetadata
-from app.security import student_hash
 
 
 def test_blueprint_parses_optional_question_marks(monkeypatch):
@@ -12,14 +11,6 @@ def test_blueprint_parses_optional_question_marks(monkeypatch):
     )
     validate_blueprint(metadata, sections)
     assert len(sections[0].questions) == 2
-
-
-def test_student_hash_is_keyed(monkeypatch):
-    monkeypatch.setenv("IDENTITY_HASH_SECRET", "test-secret")
-    from app.config import get_settings
-    get_settings.cache_clear()
-    assert student_hash(" ABC ") == student_hash("abc")
-    assert student_hash("abc") != student_hash("abd")
 
 
 def test_create_blueprint_with_s3_upload(monkeypatch):

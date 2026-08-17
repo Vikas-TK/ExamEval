@@ -63,7 +63,7 @@ class Phase4Response(BaseModel):
 
 class MatrixCell(BaseModel):
     evaluation_id: str
-    register_number: str          # resolved from student_hash via StudentIdentity
+    register_number: str          # resolved from StudentIdentity.register_number
     question_scores: dict[str, float | None]   # question_number → scored_marks
     section_totals: dict[str, float]            # section_name → subtotal
     grand_total: float
