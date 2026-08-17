@@ -160,6 +160,7 @@ _STOPWORDS = {
     "from", "its", "it", "this", "that", "these", "those", "short",
     "answer", "note", "write", "about", "differentiate", "compare",
     "advantages", "disadvantages", "each", "any", "two", "three",
+    "model", "models", "data", "system", "using", "used", "use",
 }
 
 
@@ -192,7 +193,13 @@ def _lexical_match(
             if not qtok:
                 continue
             overlap = len(b_tokens & qtok)
-            if overlap > 0:
+            # A single shared word is too weak a signal in a document full of
+            # recurring domain vocabulary (e.g. "autoencoders" appearing in
+            # both the real question and a completely unrelated answer three
+            # pages later) — that one coincidental match previously forced a
+            # question the student never wrote anything for to inherit
+            # unrelated content instead of correctly staying unmapped.
+            if overlap >= 2:
                 scored.append((overlap, bidx, bq.question_id))
 
     scored.sort(key=lambda t: -t[0])
@@ -237,6 +244,45 @@ def _normalize_qno(label: str) -> str:
     return f"Q{stripped}" if len(stripped) <= 3 and not stripped.startswith("Q") else stripped
 
 
+def _merge_repeat_collisions(blocks: list[AnswerBlock]) -> list[AnswerBlock]:
+    """
+    A long descriptive answer often contains its own numbered implementation
+    steps ("1) Named Entity Recognition is the method...", "2) Named
+    Entity...") — these get detected as fresh anchors that collide with the
+    real Part-A Q1-Q4 anchored much earlier in the document. The
+    block_index/leftover-pool logic below correctly refuses to let a later
+    collision overwrite or impersonate the real Q1-Q4 — but left as separate
+    "labeled" blocks, that content becomes permanently unreachable (excluded
+    from block_index by the first-occurrence rule, AND excluded from the
+    leftover pool because it still carries a real label) and silently
+    vanishes from the question it actually belongs to.
+    Reuniting it here, before any matching happens, is what stops a later
+    question's real content from being truncated at the first spot GOT-OCR
+    happened to read the source page's OWN internal step-numbers as if they
+    were fresh document-level anchors: any block whose normalized label
+    already appeared earlier in `blocks` is folded into the text of
+    whichever block immediately precedes it, restoring the original
+    continuous answer instead of shattering it.
+    """
+    seen: set[str] = set()
+    merged: list[AnswerBlock] = []
+    for block in blocks:
+        label = block.anchor.normalized
+        if label and label in seen:
+            if merged:
+                prev = merged[-1]
+                merged[-1] = prev.model_copy(update={
+                    "raw_text": f"{prev.raw_text}\n{block.raw_text}".strip(),
+                    "visual_elements": prev.visual_elements + block.visual_elements,
+                    "page_numbers": sorted(set(prev.page_numbers) | set(block.page_numbers)),
+                })
+                continue
+        if label:
+            seen.add(label)
+        merged.append(block)
+    return merged
+
+
 def map_answers_to_blueprint(
     blocks: list[AnswerBlock],
     blueprint: dict[str, Any],
@@ -248,6 +294,7 @@ def map_answers_to_blueprint(
 
     Fault-tolerant: a failed mapping for one question does NOT stop others.
     """
+    blocks = _merge_repeat_collisions(blocks)
     bp_questions = _extract_blueprint_questions(blueprint)
 
     if not bp_questions:
@@ -268,12 +315,20 @@ def map_answers_to_blueprint(
     # (blocks with no real label — e.g. paragraph-fallback / section-split
     # anchors — are excluded here since they'd all collide on the same
     # empty key; they're handled separately below via semantic matching)
+    # First occurrence of a given number wins, not the last: real exam
+    # question numbers always appear earliest in the document, in ascending
+    # order. A later reappearance of the same low number (e.g. "1." / "2."
+    # used as step-numbering inside a completely different, later answer —
+    # "1. encoder (f0): ..." "2. decoder (g0): ..." — is virtually always
+    # coincidental, never a second real instance of that question. Silently
+    # overwriting on collision let that later, unrelated content hijack the
+    # real answer's slot.
     block_index: dict[str, AnswerBlock] = {}
     for block in blocks:
         if not block.anchor.normalized:
             continue
         key = _normalize_qno(block.anchor.normalized)
-        block_index[key] = block
+        block_index.setdefault(key, block)
 
     # Pass 1: direct number-based matching only (exact + fuzzy digit).
     # This must run per-question BEFORE any semantic matching so that a
@@ -306,7 +361,13 @@ def map_answers_to_blueprint(
     used_block_ids = {id(b) for b in direct_matches.values()}
     leftover_blocks = [
         b for b in blocks
-        if id(b) not in used_block_ids and _looks_like_answer(b.raw_text)
+        # A block carrying a real question-number label is never eligible
+        # here, whether or not it happened to win the block_index race for
+        # that label (see setdefault above) — a block labeled "2" is
+        # claiming to answer question 2, full stop; it must never be
+        # silently reassigned to a different question via fuzzy content
+        # matching just because another "2"-labeled block appeared first.
+        if id(b) not in used_block_ids and not b.anchor.normalized and _looks_like_answer(b.raw_text)
     ]
 
     qid_to_block: dict[str, AnswerBlock] = {}
@@ -326,7 +387,30 @@ def map_answers_to_blueprint(
 
     semantic_map: dict[int, str] = {}
     if still_unmatched and still_leftover:
-        semantic_map = _llm_semantic_match(still_leftover, still_unmatched)
+        raw_semantic_map = _llm_semantic_match(still_leftover, still_unmatched)
+        if raw_semantic_map:
+            # Sanity-check the LLM's own guesses rather than trusting them
+            # outright — a small local model asked to match vague fragments
+            # ("Implementation Steps -by-Step") to a list of questions will
+            # confidently pick SOMETHING rather than admit no fit, which
+            # invents an answer for a question with genuinely nothing
+            # written for it. Require at least one shared keyword as a
+            # sanity floor (looser than the 2-word bar on the blind
+            # lexical/positional passes below, since a correctly paraphrased
+            # answer may legitimately share little exact vocabulary — but
+            # zero overlap at all means the guess isn't grounded in the text).
+            qid_to_question = {bq.question_id: bq for bq in still_unmatched}
+            for idx, qid in raw_semantic_map.items():
+                if not (0 <= idx < len(still_leftover)):
+                    continue
+                bq = qid_to_question.get(qid)
+                if bq is None:
+                    continue
+                q_tokens = _tokenize(bq.question_text or bq.question_number)
+                b_tokens = _tokenize(still_leftover[idx].raw_text)
+                if q_tokens and not (q_tokens & b_tokens):
+                    continue
+                semantic_map[idx] = qid
         if semantic_map:
             logger.info("Content-based semantic mapping resolved %d/%d remaining questions.",
                         len(semantic_map), len(still_unmatched))
@@ -340,10 +424,32 @@ def map_answers_to_blueprint(
     # Pass 3 (last resort): positional pairing, but scoped strictly to the
     # leftover questions/blocks in their own relative order — never across
     # the whole document — so it can't jump a Part-A question onto Part-B text.
+    #
+    # Pure index pairing with no content check invents an answer for a
+    # question the student never attempted at all (e.g. skipped all of Part
+    # B entirely) — the only reason it ever "worked" is that pairing by
+    # position happened to land on that question's own real content when
+    # everything was answered in order. Require at least two shared keywords
+    # between the block and the question before accepting the pair (one
+    # coincidental shared word, e.g. "autoencoders" recurring across
+    # unrelated answers in a deep-learning paper, is not enough evidence); a
+    # question with no sufficiently plausible leftover content stays
+    # SKIPPED, which is the honest outcome when nothing was written for it.
     if not semantic_map and still_leftover:
-        for i, bq in enumerate(still_unmatched):
-            if i < len(still_leftover):
-                qid_to_block.setdefault(bq.question_id, still_leftover[i])
+        used_pass3_ids: set[int] = set()
+        for bq in still_unmatched:
+            if bq.question_id in qid_to_block:
+                continue
+            q_tokens = _tokenize(bq.question_text or bq.question_number)
+            if not q_tokens:
+                continue
+            for block in still_leftover:
+                if id(block) in used_pass3_ids:
+                    continue
+                if len(_tokenize(block.raw_text) & q_tokens) >= 2:
+                    qid_to_block[bq.question_id] = block
+                    used_pass3_ids.add(id(block))
+                    break
 
     mapped_qas: list[MappedQA] = []
 

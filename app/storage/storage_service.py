@@ -8,6 +8,7 @@ Decouples application logic from storage infrastructure.
 from abc import ABC, abstractmethod
 import urllib.request
 import urllib.error
+import urllib.parse
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
@@ -61,10 +62,12 @@ class SupabaseStorageProvider(BaseStorageProvider):
             logger.warning("Supabase storage credentials not set. Falling back to local reference.")
             return f"supabase://{bucket_name}/{file_path}"
 
-        target_url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{bucket_name}/{file_path}"
+        encoded_path = urllib.parse.quote(file_path, safe="/")
+        target_url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{bucket_name}/{encoded_path}"
         token = self.settings.supabase_service_role_key
         headers = {
             "Authorization": f"Bearer {token}",
+            "apikey": token,
             "Content-Type": content_type,
             "x-upsert": "true",
         }
@@ -73,7 +76,7 @@ class SupabaseStorageProvider(BaseStorageProvider):
             with urllib.request.urlopen(req) as resp:
                 if resp.status in (200, 201):
                     logger.info(f"Uploaded file to Supabase Storage: bucket={bucket_name}, path={file_path}")
-                    return f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{file_path}"
+                    return f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{encoded_path}"
         except Exception as exc:
             logger.error(f"Failed to upload to Supabase Storage: bucket={bucket_name}, path={file_path}, error={exc}")
             # Fallback to direct client API if available
@@ -84,18 +87,19 @@ class SupabaseStorageProvider(BaseStorageProvider):
                     data,
                     file_options={"content-type": content_type, "upsert": "true"},
                 )
-                return f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{file_path}"
+                return f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{encoded_path}"
             except Exception as client_exc:
                 logger.error(f"Supabase client upload fallback error: {client_exc}")
 
-        return f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{file_path}"
+        return f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{encoded_path}"
 
     def download_file(self, bucket_name: str, file_path: str) -> bytes:
         """Downloads raw bytes of a file from Supabase Storage."""
         if self.settings.supabase_url and self.settings.supabase_service_role_key:
-            target_url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/authenticated/{bucket_name}/{file_path}"
+            encoded_path = urllib.parse.quote(file_path, safe="/")
+            target_url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/authenticated/{bucket_name}/{encoded_path}"
             token = self.settings.supabase_service_role_key
-            headers = {"Authorization": f"Bearer {token}"}
+            headers = {"Authorization": f"Bearer {token}", "apikey": token}
             req = urllib.request.Request(target_url, headers=headers, method="GET")
             try:
                 with urllib.request.urlopen(req) as resp:

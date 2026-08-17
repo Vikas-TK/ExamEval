@@ -1,7 +1,7 @@
 -r requirements.txt
 torch
 torchvision
-transformers
+transformers==4.37.2
 accelerate
 sentencepiece
 tiktoken

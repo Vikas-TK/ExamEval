@@ -62,6 +62,16 @@ def _infer_persona(question_text: str | None, subject: str | None) -> str:
     return "You are an expert university exam evaluator"
 
 
+def _fmt_marks(value: float) -> str:
+    """Renders whole numbers without a trailing '.0' but keeps genuine fractions (e.g. 0.5, 1.5)."""
+    return str(int(value)) if float(value).is_integer() else str(value)
+
+
+def _round_to_half(value: float) -> float:
+    """Quantizes to the nearest 0.5 — exam marks here are only ever whole numbers or half-marks."""
+    return round(value * 2) / 2
+
+
 def _build_system_prompt(persona: str) -> str:
     return (
         f"{persona}, evaluating a student's exam answer. "
@@ -72,7 +82,9 @@ def _build_system_prompt(persona: str) -> str:
         "elaboration — lean toward the higher of two plausible scores rather than "
         "the lower one. Only award a low score when the answer is genuinely "
         "incorrect, off-topic, or left blank. "
-        "Scores MUST be whole numbers only — no decimals, no fractions. "
+        "Scores MUST be either a whole number or a whole number plus exactly .5 (half-mark "
+        "increments only) — e.g. 0, 0.5, 1, 3.5 are valid; 3.25, 3.7, 3.33 are NOT. Never use any "
+        "decimal other than .5. "
         "Always return a valid JSON object and nothing else."
     )
 
@@ -85,10 +97,11 @@ def _build_prompt(
     question_type: str | None,
     has_visual: bool,
 ) -> str:
+    max_marks_str = _fmt_marks(maximum_marks)
     parts = [
         f"Question: {question_text}",
         f"Question Type: {question_type or 'Descriptive'}",
-        f"Maximum Marks: {int(maximum_marks)}",
+        f"Maximum Marks: {max_marks_str}",
     ]
     if answer_key:
         parts.append(f"Reference Answer (use as guidance, not rigid match): {answer_key}")
@@ -96,9 +109,10 @@ def _build_prompt(
     if has_visual:
         parts.append("Note: Student's answer included diagrams/visual elements (already noted in answer text).")
     parts.append(
-        f'\nScore the student answer as a WHOLE NUMBER from 0 to {int(maximum_marks)} — decimals are not allowed.\n'
+        f'\nScore the student answer from 0 to {max_marks_str}, in whole numbers or half-mark (.5) '
+        f'increments only — no other decimals.\n'
         f'Return ONLY this JSON:\n'
-        f'{{"score": <integer>, "feedback": "<1-2 sentence explanation for faculty>", "confidence": <0.0-1.0>}}'
+        f'{{"score": <number, whole or ending in .5>, "feedback": "<1-2 sentence explanation for faculty>", "confidence": <0.0-1.0>}}'
     )
     return "\n".join(parts)
 
@@ -161,9 +175,11 @@ def score_answer(
             raw = raw.rstrip("`").strip()
 
         data = json.loads(raw)
-        score = round(float(data.get("score", 0.0)))
-        # Clamp score to [0, maximum_marks], still an integer
-        score = max(0, min(score, int(maximum_marks)))
+        score = _round_to_half(float(data.get("score", 0.0)))
+        # Clamp score to [0, maximum_marks] — maximum_marks itself may be a
+        # half-mark value (e.g. 0.5 per question in an MCQ section), so this
+        # must stay a float rather than truncating via int().
+        score = max(0.0, min(score, float(maximum_marks)))
         return ScoringResult(
             score=float(score),
             feedback=str(data.get("feedback", "")),
