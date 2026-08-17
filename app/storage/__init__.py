@@ -5,6 +5,7 @@ Delegates file storage operations to StorageService.
 
 import io
 import logging
+import urllib.parse
 from app.core.config import get_settings
 from app.storage.storage_service import storage_service, StorageService, SupabaseStorageProvider, BaseStorageProvider
 
@@ -167,9 +168,10 @@ def upload_subject_file(
 
 def presigned_url(key: str) -> str:
     bucket_name = settings.storage_bucket_question or settings.storage_bucket or "question-papers"
+    encoded_key = urllib.parse.quote(key, safe="/")
     if settings.supabase_url:
-        return f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{key}"
-    return f"https://supabase.local/storage/v1/object/public/{bucket_name}/{key}"
+        return f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket_name}/{encoded_key}"
+    return f"https://supabase.local/storage/v1/object/public/{bucket_name}/{encoded_key}"
 
 
 def download_bytes(key: str) -> bytes:

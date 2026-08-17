@@ -178,11 +178,13 @@ def _find_per_question_marks(text: str) -> float | None:
     """
     Extract the PER-QUESTION mark value from a section header/instruction
     line, distinguishing it from the section's total. A pattern like
-    "(7 x 4 = 28 marks)" states count x per-question = total — the value we
-    want is the per-question one (4), not the total that sits right next to
-    the word "marks" (28), which a naive "\\d+ marks" search would grab.
+    "(7 x 4 = 28 marks)" or "(12*0.5=6 Marks)" states count x per-question =
+    total — the value we want is the per-question one (4 / 0.5), not the
+    total that sits right next to the word "marks" (28 / 6), which a naive
+    "\\d+ marks" search would grab. Papers use 'x', '×', or '*' interchangeably
+    as the multiplication sign here.
     """
-    m = re.search(r"(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*=\s*\d+(?:\.\d+)?\s*marks?", text, re.I)
+    m = re.search(r"(\d+)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*=\s*\d+(?:\.\d+)?\s*marks?", text, re.I)
     if m:
         return float(m.group(2))
     m = re.search(r"(\d+(?:\.\d+)?)\s*marks?\s*each\b", text, re.I)
@@ -304,7 +306,10 @@ def _qwen_fallback(text: str) -> list[BlueprintSection]:
         "Combine all multi-line text, continuous paragraphs, and wrapped lines into a SINGLE question_text.\n"
         "2. NOISE & HEADER FILTERING: Ignore instruction blocks, study references, metadata, or section titles.\n"
         "3. QUESTION NUMBERING & MARKS: Extract question_number exactly (e.g., 'Q1') and explicit mark values.\n"
-        "4. QUESTION TYPE CLASSIFICATION: Classify each question accurately ('MCQ', 'Descriptive', 'Short Answer', 'Numerical', 'Diagram').\n\n"
+        "4. QUESTION TYPE CLASSIFICATION: Classify each question accurately ('MCQ', 'Descriptive', 'Short Answer', 'Numerical', 'Diagram').\n"
+        "5. VERBATIM TEXT ONLY: question_text must be copied exactly as printed. NEVER fill in blanks (e.g. '___________', "
+        "'________') with the answer, NEVER answer the question, and NEVER add explanation not present in the source — "
+        "a blank stays a blank, character for character.\n\n"
         "Return ONLY a JSON object with format: {\"sections\":[{\"name\":\"Part A\",\"questions\":[{\"question_number\":\"Q1\",\"question_text\":\"...\",\"maximum_marks\":5,\"question_type\":\"Descriptive\"}]}]}"
     )
     response = client.chat.completions.create(

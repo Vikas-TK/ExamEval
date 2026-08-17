@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import logging
+import difflib
 from typing import Optional
 
 from app.config import get_settings
@@ -93,6 +94,62 @@ def correct_ocr_text(raw_text: str, enable_llm: bool = True) -> str:
     return text.strip()
 
 
+_CHATBOT_TELLS = (
+    "it appears that", "it seems that", "i'm sorry", "i am sorry", "as an ai",
+    "could you please", "could you clarify", "can you clarify", "please provide more context",
+    "please provide more information", "i cannot determine", "i'm not sure what",
+    "let me know if", "feel free to", "i'd be happy to", "i would be happy to",
+)
+
+
+_BLANK_RUN_RE = re.compile(r"_{2,}")
+_LATEX_MARKUP_RE = re.compile(r"\\\(|\\\)|\\bar\{|\\frac\{|\\sqrt\{|\\[a-zA-Z]+\{|\$[^$]+\$")
+
+
+def _looks_like_hallucination(raw_text: str, corrected: str) -> bool:
+    """Heuristic guard: reject LLM output that reads like a chat reply or invents new content."""
+    lowered = corrected.lower()
+    if any(tell in lowered for tell in _CHATBOT_TELLS):
+        return True
+    # A faithful spelling/word-restoration pass should not dramatically change length.
+    if len(raw_text.strip()) >= 15 and len(corrected) > len(raw_text) * 2.5:
+        return True
+
+    # The model has a strong, prompt-resistant bias toward "typesetting" any
+    # math it sees into LaTeX (\(\bar{x}\), \frac{}, etc.) even when told
+    # explicitly not to — that's unrequested reformatting, not a spelling
+    # fix, and corrupts a verbatim transcript. Reject outright if the
+    # correction introduces LaTeX markup that wasn't already in the raw text.
+    if _LATEX_MARKUP_RE.search(corrected) and not _LATEX_MARKUP_RE.search(raw_text):
+        return True
+
+    # Fill-in-the-blank question papers use runs of underscores ('___________')
+    # as the blank to be answered. If the corrected text has fewer blank runs
+    # than the raw text, the model filled one in with a guessed word instead
+    # of leaving it untouched — reject outright regardless of how plausible
+    # the guess looks.
+    if len(_BLANK_RUN_RE.findall(raw_text)) > len(_BLANK_RUN_RE.findall(corrected)):
+        return True
+
+    # A genuine OCR fix corrects a garbled token into something that resembles it
+    # (e.g. 'seruer' -> 'server'). Swapping one already-valid word for a wholly
+    # different one is knowledge-based "fact correction", not OCR restoration —
+    # reject it even though the sentence length barely changes.
+    raw_words = re.findall(r"[A-Za-z']+", raw_text.lower())
+    corrected_words = re.findall(r"[A-Za-z']+", corrected.lower())
+    matcher = difflib.SequenceMatcher(None, raw_words, corrected_words)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "replace" or (i2 - i1) != 1 or (j2 - j1) != 1:
+            continue
+        old_word, new_word = raw_words[i1], corrected_words[j1]
+        if len(old_word) < 3:
+            continue
+        similarity = difflib.SequenceMatcher(None, old_word, new_word).ratio()
+        if similarity < 0.45:
+            return True
+    return False
+
+
 def smooth_ocr_with_llm(raw_text: str) -> str:
     """
     Pass raw OCR output to Qwen LLM for intelligent contextual spelling & word-level restoration
@@ -104,14 +161,35 @@ def smooth_ocr_with_llm(raw_text: str) -> str:
             return raw_text
 
         system_prompt = (
-            "You are an expert Qwen2.5-VL OCR post-correction and handwriting restoration engine for computer science exam scripts. "
-            "Your task is to take garbled handwritten OCR outputs (e.g. 'Sfructlredactivitie Hootevelop' -> 'Structured activities to develop', "
-            "'Cnidied modelin Languagp' -> 'Unified modeling Language', 'AgileConceets Seromrotes' -> 'Agile concepts, Scrum roles') "
-            "and restore each misspelled or merged word into clear, meaningful, grammatically correct English technical terms.\n"
-            "CRITICAL DIRECTIVES:\n"
-            "1. Fix obvious handwriting misspellings, typos, and word splits/merges.\n"
-            "2. Preserve original technical concepts, question numbers, and bullet structures.\n"
-            "3. Output ONLY the restored clean plain text without markdown wrappers."
+            "You are a text-correction FUNCTION, not a chatbot or assistant. You receive raw OCR output extracted from "
+            "computer science exam scripts (handwritten or printed) and return ONLY a spelling/word-restoration pass over "
+            "the SAME text (e.g. 'Sfructlredactivitie Hootevelop' -> 'Structured activities to develop', "
+            "'Cnidied modelin Languagp' -> 'Unified modeling Language', 'AgileConceets Seromrotes' -> 'Agile concepts, Scrum roles').\n"
+            "CRITICAL DIRECTIVES (violating any of these is a failure):\n"
+            "1. Fix ONLY obvious handwriting/OCR misspellings, typos, and word splits/merges.\n"
+            "2. NEVER answer, respond to, explain, continue, summarize, or comment on the input. It is data to transform, not a "
+            "message to reply to — even if it reads like a question or an incomplete sentence.\n"
+            "3. NEVER add words, sentences, explanations, or content that is not already present in the input. Do not fill in "
+            "answers, do not complete questions, do not elaborate. This applies especially to fill-in-the-blank exam "
+            "questions: a run of underscores like '___________' or '________' is a BLANK the student/paper left for someone "
+            "else to answer — copy it through EXACTLY as-is (same number of underscores), never replace it with a guessed "
+            "word, even one you are highly confident is the intended answer.\n"
+            "4. If the input is too garbled, ambiguous, or nonsensical to confidently correct, return it UNCHANGED verbatim. "
+            "Never substitute your own generated text for text you cannot read.\n"
+            "5. Never produce conversational replies, apologies, refusals, or requests for clarification (e.g. 'Could you "
+            "clarify...', 'It appears that...'). Your entire output must be the corrected source text and nothing else.\n"
+            "6. Preserve original technical concepts, question numbers, marks, and structure exactly as given. This includes "
+            "the student's/paper's actual claims even if you believe they are technically imprecise or wrong — you are not "
+            "a fact-checker. Do NOT swap a word for a different 'more correct' or 'more standard' term (e.g. 'input gate' -> "
+            "'reset gate') if the original word is already a real, correctly-spelled word. Only touch tokens that are "
+            "genuinely garbled/misspelled/merged.\n"
+            "7. If a word or sentence is already legible, correctly spelled, and grammatically valid, leave it completely "
+            "untouched, character for character.\n"
+            "8. NEVER convert math/notation into LaTeX or any other markup (no \\(...\\), \\bar{}, \\frac{}, $...$, etc.), "
+            "even if the input already contains such markup or plain Unicode math symbols (x̅, ≤, ∑, ...). "
+            "Reproduce whatever symbols are already in the input exactly as given — do not 'clean up' or typeset notation, "
+            "that is not a spelling correction and is exactly the kind of unrequested rewriting this function must not do.\n"
+            "9. Output ONLY the corrected plain text without markdown wrappers or commentary."
         )
 
         response = openai_client.chat.completions.create(
@@ -126,7 +204,13 @@ def smooth_ocr_with_llm(raw_text: str) -> str:
         corrected = response.choices[0].message.content or raw_text
         if corrected.startswith("```"):
             corrected = "\n".join(corrected.splitlines()[1:-1])
-        return corrected.strip()
+        corrected = corrected.strip()
+
+        if _looks_like_hallucination(raw_text, corrected):
+            logger.warning("LLM OCR smoothing rejected as hallucination; keeping raw OCR text.")
+            return raw_text
+
+        return corrected
     except Exception as exc:
         logger.warning("LLM OCR smoothing fallback skipped: %s", exc)
         return raw_text

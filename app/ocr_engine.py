@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import tempfile
+from collections import Counter
 from typing import Any, Optional
 
 from app.config import get_settings
@@ -71,7 +72,11 @@ them exactly:
 - If a question number or label is written anywhere on the page (e.g. "1.",
   "Q1", "Q.1)", "1)", "(a)"), reproduce it EXACTLY at the start of the line
   where it appears in the transcript — never drop it, renumber it, or infer
-  one that isn't visibly written.
+  one that isn't visibly written. This applies EVEN WHEN the student wrote no
+  answer at all next to that number (left it blank/skipped it) — the bare
+  number on its own line (e.g. "6.") must still appear in the transcript
+  exactly where it is on the page. Do not silently omit a question number
+  just because there is nothing else on its line.
 - Preserve the original line breaks and paragraph breaks between answers —
   insert a blank line between one answer and the next exactly where the
   student's handwriting shows a visual gap (new question, new paragraph),
@@ -80,6 +85,29 @@ them exactly:
   confidence accordingly — never invent or guess at illegible words.
 - bbox coordinates are pixel coordinates in the given image.
 - Do not invent answers or content that is not visibly present.
+- If a region of the page is a diagram, chart, graph, table, or drawing rather
+  than handwritten/printed text, do NOT attempt to transcribe its shapes,
+  axes, or labels as prose — instead add an entry for it in visual_elements.
+  Its "description" must name the CONCEPT/TOPIC the diagram is illustrating
+  (e.g. "block diagram of an encoder-decoder autoencoder architecture", "GRU
+  update/reset gate flow"), not a generic description of its visual layout
+  (never write things like "a table with two columns and three rows" or "a
+  diagram with boxes and arrows" — that describes shapes, not content, and is
+  useless to a grader). If you cannot confidently tell what the diagram
+  actually depicts, OMIT it from visual_elements entirely rather than
+  including a vague/generic entry — no entry is better than a useless one.
+  If a page (or the remainder of a page after any actual text) is purely such
+  a diagram with no handwritten text at all, leave transcript as an empty
+  string for that portion — never pad it with guessed, invented, or
+  conversational text.
+- confidence measures how much of the page's actual content you successfully
+  captured — it is NOT a generic "how sure am I" score. If the page is blank,
+  contains no visible handwriting/printing/diagrams at all, or is otherwise
+  unreadable (e.g. a scanning error, solid color, or corrupt image) so that
+  transcript and visual_elements are both empty, report confidence near 0.0
+  (e.g. 0.0-0.1) — an empty result is only "confident" in the sense that there
+  is genuinely nothing there, and this system routes low confidence to manual
+  review, which is the correct outcome for a page that couldn't be read.
 """
 
 
@@ -292,6 +320,69 @@ def _fallback_page(image_bytes: bytes, page_number: int, reason: str) -> tuple[O
     ), reason
 
 
+def _looks_like_non_text_page(text: str) -> bool:
+    """
+    GOT-OCR is pure text-OCR with no diagram/chart awareness — when a page is
+    actually a diagram or graph rather than handwriting/print, it doesn't
+    error out, it just mis-reads shapes as a run of digits/symbols. That
+    garbled output otherwise looks like a "successful" transcription and
+    blocks the pipeline from ever falling through to Qwen's vision model,
+    which can actually recognize and describe the diagram via visual_elements.
+    Flag output that isn't real prose so extract_page() falls through to Qwen.
+    """
+    stripped = text.strip()
+    if len(stripped) < 3:
+        return True
+    non_space_count = sum(1 for c in stripped if not c.isspace())
+    if non_space_count == 0:
+        return True
+    alpha_ratio = sum(1 for c in stripped if c.isalpha()) / non_space_count
+    return alpha_ratio < 0.5
+
+
+def _looks_like_repetition_collapse(text: str) -> bool:
+    """
+    GOT-OCR's built-in no_repeat_ngram_size guard only blocks an *exact*
+    long n-gram from recurring — it doesn't stop the model degenerating
+    into a short phrase repeated with trivial variation ("model. model.
+    Model Model model model...") when it can't confidently read confusing
+    content, which dense handwritten code reliably triggers. Flag output
+    dominated by one short token so extract_page() falls through to Qwen
+    instead of keeping hundreds of repeated words as the "transcript".
+    """
+    words = re.findall(r"[A-Za-z]+", text.lower())
+    if len(words) < 20:
+        return False
+    _, count = Counter(words).most_common(1)[0]
+    return (count / len(words)) > 0.25
+
+
+_INLINE_QNUM_AFTER_COMMA_RE = re.compile(r"(,\s*)(\d{1,3})\.(\s+)(?=[a-zA-Z])")
+_INLINE_QNUM_BEFORE_CAPITAL_RE = re.compile(r"(?<!\n)(\b\d{1,3})\.(\s*)(?=[A-Z*])")
+
+
+def _resplit_run_on_answers(text: str) -> str:
+    """
+    GOT-OCR's plain-OCR decoding sometimes emits visually-distinct
+    handwritten lines as one run-on line with no newline between them at
+    all (confirmed by comparing against the source image directly — the
+    handwriting itself has normal line spacing). Downstream anchor
+    detection only recognizes a question number at the start of a line, so
+    a run like "11. False, 12. opinion PART-B 13. ..." hides every number
+    after the first from it entirely. Re-inserts a line break in the two
+    narrow, high-confidence spots this shows up: right after a short
+    comma-separated answer ("False, 12." -> "False,\n12."), and right
+    before a bullet/capitalized answer starts ("13. * Sten..." ->
+    "\n13. * Sten..."). Deliberately narrow — verified against real pages
+    full of standalone numbers (Python code with layer sizes, epoch
+    counts, etc.) to confirm it does not fire there and fragment code that
+    currently transcribes correctly.
+    """
+    text = _INLINE_QNUM_AFTER_COMMA_RE.sub(r",\n\2.\3", text)
+    text = _INLINE_QNUM_BEFORE_CAPITAL_RE.sub(r"\n\1.\2", text)
+    return text
+
+
 def _extract_got_page(image_bytes: bytes, page_number: int) -> OCRPage:
     """Run GOT-OCR 2.0 locally. Heavy model imports and loading are lazy."""
     global _got_model, _got_tokenizer
@@ -345,9 +436,19 @@ def _extract_got_page(image_bytes: bytes, page_number: int) -> OCRPage:
     transcript = str(transcript or "").strip()
     if not transcript:
         raise ValueError("GOT OCR returned empty text")
+    if _looks_like_non_text_page(transcript):
+        raise ValueError(
+            "GOT OCR output does not look like transcribable text (likely a diagram/figure); "
+            "deferring to Qwen vision extraction"
+        )
+    if _looks_like_repetition_collapse(transcript):
+        raise ValueError(
+            "GOT OCR output collapsed into repetitive text; deferring to Qwen vision extraction"
+        )
 
     from app.ocr_corrector import correct_ocr_text
     transcript = correct_ocr_text(transcript)
+    transcript = _resplit_run_on_answers(transcript)
     return OCRPage(
         page_number=page_number,
         transcript=transcript,
@@ -413,11 +514,27 @@ def _extract_qwen_page(image_bytes: bytes, page_number: int, evaluation_id: Opti
         confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0.0))))
         transcript = str(parsed.get("transcript", "")).strip()
         structure_map = parsed.get("structure_map")
-        if not transcript and isinstance(structure_map, dict):
-            transcript = "\n".join(f"Question {q}:\n{a}" for q, a in structure_map.items() if a)
+        if isinstance(structure_map, dict) and len(structure_map) == 1:
+            # The model sometimes puts a question's answer here instead of
+            # (or in addition to) folding it into transcript — e.g. a page
+            # whose transcript covers the tail of one answer while a new
+            # question's content lands in structure_map keyed by its number.
+            # Appending rather than only using this as an empty-transcript
+            # fallback is what stops that content from being silently
+            # dropped, which otherwise looks like the answer was cut short.
+            # Restricted to exactly one entry: when the model instead uses
+            # structure_map for its own generic step-by-step breakdown of
+            # the SAME content already in transcript (e.g. "1", "2", "3"...
+            # for a code block), merging would inject fake low-number
+            # question anchors that can overwrite the real Q1-Q5 elsewhere
+            # in the document via number-based matching.
+            structured_text = "\n\n".join(f"Question {q}:\n{a}" for q, a in structure_map.items() if a)
+            if structured_text:
+                transcript = f"{transcript}\n\n{structured_text}".strip() if transcript else structured_text
 
         from app.ocr_corrector import correct_ocr_text
         transcript = correct_ocr_text(transcript)
+        transcript = _resplit_run_on_answers(transcript)
     except (TypeError, ValueError) as exc:
         logger.exception("Invalid OCR schema for evaluation_id=%s page=%s: %s", eval_str, page_number, exc)
         return _fallback_page(image_bytes, page_number, f"invalid_model_schema: {exc}")[0]
