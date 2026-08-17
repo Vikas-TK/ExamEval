@@ -104,7 +104,11 @@ def _normalize_label(raw: str) -> str:
     return f"Q{stripped}" if len(stripped) <= 3 and not stripped.startswith("Q") else stripped
 
 
-def _regex_detect(flat_text: str, page_map: list[tuple[int, int, int]]) -> list[QuestionAnchor]:
+def _regex_detect(
+    flat_text: str,
+    page_map: list[tuple[int, int, int]],
+    blueprint_question_numbers: set[str] | None = None,
+) -> list[QuestionAnchor]:
     """
     Run all anchor regex patterns over flat_text and return deduplicated anchors.
     page_map: list of (char_start, char_end, page_number) per page.
@@ -139,10 +143,13 @@ def _regex_detect(flat_text: str, page_map: list[tuple[int, int, int]]) -> list[
             ))
 
     anchors.sort(key=lambda a: a.char_offset)
-    return _apply_sequence_guard(anchors)
+    return _apply_sequence_guard(anchors, blueprint_question_numbers)
 
 
-def _apply_sequence_guard(anchors: list[QuestionAnchor]) -> list[QuestionAnchor]:
+def _apply_sequence_guard(
+    anchors: list[QuestionAnchor],
+    blueprint_question_numbers: set[str] | None = None,
+) -> list[QuestionAnchor]:
     """
     Reject standalone-number and lettered-subpart anchors that are almost
     certainly internal list/step markers inside a long essay answer rather
@@ -161,10 +168,24 @@ def _apply_sequence_guard(anchors: list[QuestionAnchor]) -> list[QuestionAnchor]
     too and go through the same check — deliberately, since an in-answer
     reference like that is rare and treating it uniformly avoids needing to
     track which regex pattern produced each anchor.
+
+    A student is free to answer optional/choice questions within one Part in
+    any order (a section offering "answer any two of 16/17/18" has no
+    "expected" order) — writing 18 before 16 would otherwise permanently
+    lock 16 out, since it never exceeds the running max. When the caller
+    supplies the real blueprint question numbers, a bare number that exactly
+    matches one of them — and hasn't already been claimed by an earlier
+    anchor in this document — is also accepted, on top of (never instead of)
+    the ordering rule above. This can't reopen the door for internal list
+    markers: a Q13 essay's own "1. Take input..." would need the real
+    blueprint Q1 to still be unclaimed, but Q1's real anchor is always
+    detected earlier in the document (Part A comes first), so it's already
+    claimed by the time Q13's essay is reached.
     """
     accepted: list[QuestionAnchor] = []
     section_max_num = 0
     last_accepted_offset = -10 ** 9
+    claimed: set[str] = set()
 
     for anchor in anchors:
         norm = (anchor.normalized or "").upper()
@@ -187,6 +208,11 @@ def _apply_sequence_guard(anchors: list[QuestionAnchor]) -> list[QuestionAnchor]
             # alternative appearing after the first was already accepted).
             is_choice_form = bool(numeric_match.group(4))
             close_enough = (anchor.char_offset - last_accepted_offset) <= _SUBPART_PROXIMITY_CHARS
+            is_unclaimed_blueprint_number = (
+                blueprint_question_numbers is not None
+                and norm in blueprint_question_numbers
+                and norm not in claimed
+            )
             if has_subpart and num == section_max_num and close_enough:
                 accepted.append(anchor)
                 last_accepted_offset = anchor.char_offset
@@ -194,10 +220,12 @@ def _apply_sequence_guard(anchors: list[QuestionAnchor]) -> list[QuestionAnchor]
                 section_max_num == 0
                 or num > section_max_num
                 or (is_choice_form and num == section_max_num)
+                or is_unclaimed_blueprint_number
             ):
                 accepted.append(anchor)
-                section_max_num = num
+                section_max_num = max(section_max_num, num)
                 last_accepted_offset = anchor.char_offset
+                claimed.add(norm)
             # else: internal list/step marker inside the current answer — drop it
             continue
 
@@ -214,7 +242,11 @@ def _apply_sequence_guard(anchors: list[QuestionAnchor]) -> list[QuestionAnchor]
     return accepted
 
 
-def looks_like_new_question(text: str, current_max_num: int) -> tuple[bool, int]:
+def looks_like_new_question(
+    text: str,
+    current_max_num: int,
+    blueprint_question_numbers: set[str] | None = None,
+) -> tuple[bool, int]:
     """
     Best-effort check for whether `text` (a paragraph's own opening line)
     looks like a genuine new question boundary rather than a continuation of
@@ -247,8 +279,21 @@ def looks_like_new_question(text: str, current_max_num: int) -> tuple[bool, int]
             is_choice_form = bool(numeric_match.group(4))
             if has_subpart:
                 return False, current_max_num
-            if current_max_num == 0 or num > current_max_num or (is_choice_form and num == current_max_num):
-                return True, num
+            # Same rescue as _apply_sequence_guard: a real, out-of-order
+            # blueprint question number (e.g. 16 appearing after 18 within
+            # one "answer any two" Part) is still recognized as a genuine
+            # new question even though it doesn't exceed current_max_num.
+            is_unclaimed_blueprint_number = (
+                blueprint_question_numbers is not None
+                and _normalize_label(label) in blueprint_question_numbers
+            )
+            if (
+                current_max_num == 0
+                or num > current_max_num
+                or (is_choice_form and num == current_max_num)
+                or is_unclaimed_blueprint_number
+            ):
+                return True, max(current_max_num, num)
             return False, current_max_num
 
         if _ROMAN_OR_LETTER_RE.match(label):
@@ -308,12 +353,20 @@ def _llm_fallback_detect(flat_text: str) -> list[QuestionAnchor]:
 
 def detect_anchors(
     ocr_data: dict[str, Any],
+    blueprint_question_numbers: set[str] | None = None,
 ) -> tuple[str, list[tuple[int, int, int]], list[QuestionAnchor]]:
     """
     Main anchor detection entry point.
 
     Args:
         ocr_data: OCR JSON {"pages": [{"page_number": int, "transcript": str, "visual_elements": [...]}]}
+        blueprint_question_numbers: normalized (see _normalize_label) real
+            question numbers from the blueprint, when available. Lets a
+            genuine out-of-order question (e.g. 16 answered after 18 within
+            one "answer any two" Part) still be recognized as a real anchor
+            even though it doesn't exceed the running max — see
+            _apply_sequence_guard. Optional: anchor detection works the same
+            as before when omitted.
 
     Returns:
         (flat_text, page_map, anchors)
@@ -336,7 +389,7 @@ def detect_anchors(
 
     flat_text = "\n".join(segments)
 
-    anchors = _regex_detect(flat_text, page_map)
+    anchors = _regex_detect(flat_text, page_map, blueprint_question_numbers)
 
     # Determine average confidence
     avg_conf = (sum(a.confidence for a in anchors) / len(anchors)) if anchors else 0.0

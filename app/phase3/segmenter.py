@@ -49,6 +49,7 @@ def segment_answers(
     anchors: list[QuestionAnchor],
     ocr_data: dict[str, Any],
     page_map: list[tuple[int, int, int]],
+    blueprint_question_numbers: set[str] | None = None,
 ) -> list[AnswerBlock]:
     """
     Slice flat_text at every anchor boundary to produce AnswerBlocks.
@@ -58,6 +59,10 @@ def segment_answers(
         anchors:   Sorted list of QuestionAnchor objects.
         ocr_data:  Full OCR JSON (for visual_elements lookup).
         page_map:  (char_start, char_end, page_number) tuples.
+        blueprint_question_numbers: normalized real blueprint question
+            numbers, passed through to looks_like_new_question so an
+            out-of-order question missed by detect_anchors can still be
+            recognized when re-checked at the paragraph level.
 
     Returns:
         List of AnswerBlock, one per anchor, with raw_text and visual_elements.
@@ -104,13 +109,16 @@ def segment_answers(
             page_numbers=sorted(set(page_numbers)),
         ))
 
-    blocks = _split_section_header_blocks(blocks)
+    blocks = _split_section_header_blocks(blocks, blueprint_question_numbers)
 
     logger.info("Segmented %d answer blocks from %d anchors.", len(blocks), len(anchors))
     return blocks
 
 
-def _split_section_header_blocks(blocks: list[AnswerBlock]) -> list[AnswerBlock]:
+def _split_section_header_blocks(
+    blocks: list[AnswerBlock],
+    blueprint_question_numbers: set[str] | None = None,
+) -> list[AnswerBlock]:
     """
     Split a block into one sub-block per paragraph whenever it looks like it
     swallowed more than one answer. Two distinct cases produce this:
@@ -166,7 +174,7 @@ def _split_section_header_blocks(blocks: list[AnswerBlock]) -> list[AnswerBlock]
 
         groups: list[tuple[QuestionAnchor, list[str]]] = [(block.anchor, [paragraphs[0]])]
         for para in paragraphs[1:]:
-            is_new, current_max_num = looks_like_new_question(para, current_max_num)
+            is_new, current_max_num = looks_like_new_question(para, current_max_num, blueprint_question_numbers)
             if is_new:
                 groups.append((
                     QuestionAnchor(

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import uuid
 
-from app.phase3.anchor_detector import detect_anchors
-from app.phase3.mapper import map_answers_to_blueprint
+from app.phase3.anchor_detector import _normalize_label, detect_anchors
+from app.phase3.mapper import _extract_blueprint_questions, map_answers_to_blueprint
 from app.phase3.segmenter import segment_answers
 
 
@@ -49,8 +49,15 @@ def _blueprint(sections: list[tuple[str, list[tuple[str, str, float, str]]]]) ->
 
 
 def _run(ocr_json: dict, blueprint_json: dict):
-    flat_text, page_map, anchors = detect_anchors(ocr_json)
-    blocks = segment_answers(flat_text, anchors, ocr_json, page_map)
+    # Mirrors Phase3Service.run(): the real blueprint question numbers are
+    # always available and threaded into anchor detection/segmentation, so
+    # tests exercise the same path production does.
+    blueprint_question_numbers = {
+        _normalize_label(bq.question_number)
+        for bq in _extract_blueprint_questions(blueprint_json)
+    }
+    flat_text, page_map, anchors = detect_anchors(ocr_json, blueprint_question_numbers)
+    blocks = segment_answers(flat_text, anchors, ocr_json, page_map, blueprint_question_numbers)
     return map_answers_to_blueprint(blocks, blueprint_json, uuid.uuid4(), uuid.uuid4())
 
 
@@ -281,3 +288,45 @@ def test_sections_answered_out_of_order_still_isolate_correctly():
     # None of Part B/C/D's content leaked backward into Part A's short answers.
     assert "Denoising" not in q1.student_answer
     assert "GAN" not in q2.student_answer
+
+
+def test_higher_number_answered_before_lower_one_in_same_section():
+    """
+    A "answer any two of 16/17/18" style Part has no expected order — a
+    student writing Q18 before Q16, with no Part header between them (same
+    section, so the guard's usual reset point never fires), must still get
+    Q16 recognized as its own real anchor instead of being merged into
+    Q18's answer. This is only possible because the real blueprint question
+    numbers are threaded into anchor detection (see Phase3Service.run and
+    _run() in this file) — the plain monotonic-sequence rule alone would
+    reject 16 for not exceeding 18.
+    """
+    ocr_json = _ocr([
+        "Part-C\n"
+        "18. LSTM model to generate captions for video frames:\n"
+        "LSTM is used to generate captions by extracting the dialogue from "
+        "the video frames. First preprocess the video dataset, then train "
+        "the model.\n"
+        "16. Evaluate the suitability of GRU architecture for time-series "
+        "forecasting.\n"
+        "GRU is a simplified version of LSTM and is used for sequence "
+        "modeling. GRU has two gates: update gate and reset gate.\n"
+    ])
+    blueprint_json = _blueprint([
+        ("Part C", [
+            ("q16", "16", 14.0, "Evaluate the suitability of GRU architecture."),
+            ("q18", "18", 14.0, "Apply an LSTM model to generate captions for video frames."),
+        ]),
+    ])
+
+    mapped = _run(ocr_json, blueprint_json)
+    q16 = _by_id(mapped, "q16")
+    q18 = _by_id(mapped, "q18")
+
+    assert q16.mapping_status == "MAPPED"
+    assert q18.mapping_status == "MAPPED"
+    assert "GRU is a simplified version" in q16.student_answer
+    assert "LSTM is used to generate captions" in q18.student_answer
+    # Each stays isolated to its own answer — neither absorbed the other's.
+    assert "update gate" not in q18.student_answer
+    assert "video frames" not in q16.student_answer
