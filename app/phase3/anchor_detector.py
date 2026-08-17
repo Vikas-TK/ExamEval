@@ -44,6 +44,18 @@ _NOISE_PATTERNS: list[re.Pattern[str]] = [
 
 _LOW_CONFIDENCE_THRESHOLD = 0.85
 
+# A bare numeric anchor ("13", "13a", "18.1") — used to tell a real top-level
+# question number apart from a sub-numbered continuation of the one just
+# accepted (group 2 = decimal sub-part, group 3 = trailing letter sub-part).
+_NUMERIC_LABEL_RE = re.compile(r"^(\d{1,3})(?:\.(\d{1,2})|([a-z]))?$", re.I)
+# A bare letter/roman sub-part label ("a", "ii") with no digits at all.
+_ROMAN_OR_LETTER_RE = re.compile(r"^[a-z]{1,4}$", re.I)
+# How close (in characters) a lettered/roman sub-part must sit to the anchor
+# it belongs to before it's trusted — a real "13(a)", "13(b)" pair appears
+# together at the top of that answer; a "(i)", "(ii)" bullet list deep inside
+# a multi-page essay does not.
+_SUBPART_PROXIMITY_CHARS = 500
+
 
 def _is_noise(text: str) -> bool:
     return any(p.search(text) for p in _NOISE_PATTERNS)
@@ -108,7 +120,113 @@ def _regex_detect(flat_text: str, page_map: list[tuple[int, int, int]]) -> list[
             ))
 
     anchors.sort(key=lambda a: a.char_offset)
-    return anchors
+    return _apply_sequence_guard(anchors)
+
+
+def _apply_sequence_guard(anchors: list[QuestionAnchor]) -> list[QuestionAnchor]:
+    """
+    Reject standalone-number and lettered-subpart anchors that are almost
+    certainly internal list/step markers inside a long essay answer rather
+    than real question boundaries — e.g. a Q13 essay's own "1. Take input...",
+    "2. Separate frames..." working-process list, misread as fresh Q1/Q2
+    anchors that collide with the real (much earlier) Part-A Q1/Q2.
+
+    Kept deliberately simple: exam question numbers only go up within a
+    section, so any bare numeric anchor that is NOT higher than the highest
+    one already accepted in the current section is almost always an internal
+    list marker, not a new question — except a sub-numbered continuation of
+    the number just accepted ("18.1", "18.2", "13a", "13b"), which is kept if
+    it sits close to its parent. Lettered/roman sub-parts ("(a)", "(ii)") are
+    only trusted close to the anchor they immediately follow for the same
+    reason. Explicit "Q13"/"Question 13" style anchors are numeric-shaped
+    too and go through the same check — deliberately, since an in-answer
+    reference like that is rare and treating it uniformly avoids needing to
+    track which regex pattern produced each anchor.
+    """
+    accepted: list[QuestionAnchor] = []
+    section_max_num = 0
+    last_accepted_offset = -10 ** 9
+
+    for anchor in anchors:
+        norm = (anchor.normalized or "").upper()
+        label = anchor.raw_label.strip()
+
+        if norm.startswith("PART") or norm.startswith("SECTION"):
+            accepted.append(anchor)
+            section_max_num = 0
+            last_accepted_offset = anchor.char_offset
+            continue
+
+        numeric_match = _NUMERIC_LABEL_RE.match(label)
+        if numeric_match:
+            num = int(numeric_match.group(1))
+            has_subpart = bool(numeric_match.group(2)) or bool(numeric_match.group(3))
+            close_enough = (anchor.char_offset - last_accepted_offset) <= _SUBPART_PROXIMITY_CHARS
+            if has_subpart and num == section_max_num and close_enough:
+                accepted.append(anchor)
+                last_accepted_offset = anchor.char_offset
+            elif not has_subpart and (section_max_num == 0 or num > section_max_num):
+                accepted.append(anchor)
+                section_max_num = num
+                last_accepted_offset = anchor.char_offset
+            # else: internal list/step marker inside the current answer — drop it
+            continue
+
+        if _ROMAN_OR_LETTER_RE.match(label):
+            if (anchor.char_offset - last_accepted_offset) <= _SUBPART_PROXIMITY_CHARS:
+                accepted.append(anchor)
+                last_accepted_offset = anchor.char_offset
+            # else: bullet/list marker far from any real anchor — drop it
+            continue
+
+        # Anything else (shouldn't normally occur) — keep as-is.
+        accepted.append(anchor)
+
+    return accepted
+
+
+def looks_like_new_question(text: str, current_max_num: int) -> tuple[bool, int]:
+    """
+    Best-effort check for whether `text` (a paragraph's own opening line)
+    looks like a genuine new question boundary rather than a continuation of
+    the answer it was found inside — reusing the same anchor patterns and
+    monotonic-sequence philosophy as detect_anchors()/_apply_sequence_guard().
+
+    Used by the segmenter to decide whether a paragraph break inside an
+    already-anchored answer block is a real missed question (rare) or just a
+    section heading / numbered step within one long multi-page answer (the
+    common case for high-mark descriptive questions).
+
+    Returns (is_new_question, updated_max_num) — updated_max_num is
+    unchanged from current_max_num when is_new_question is False, so callers
+    can thread it through consecutive paragraphs in one pass.
+    """
+    probe = "\n" + text.lstrip("\n")
+    for pattern, _ in _ANCHOR_PATTERNS[:3]:  # numeric/Q-prefixed/sub-part only — not Part/Section
+        m = pattern.match(probe)
+        if not m:
+            continue
+        target = m.group(1) if m.groups() and m.group(1) else m.group()
+        label = target.strip()
+        if _is_noise(probe[: len(m.group()) + 30]):
+            continue
+
+        numeric_match = _NUMERIC_LABEL_RE.match(label)
+        if numeric_match:
+            num = int(numeric_match.group(1))
+            has_subpart = bool(numeric_match.group(2)) or bool(numeric_match.group(3))
+            if has_subpart:
+                return False, current_max_num
+            if current_max_num == 0 or num > current_max_num:
+                return True, num
+            return False, current_max_num
+
+        if _ROMAN_OR_LETTER_RE.match(label):
+            # No cheap proximity signal once already inside one long
+            # block's paragraph stream — treat as a continuation.
+            return False, current_max_num
+
+    return False, current_max_num
 
 
 def _llm_fallback_detect(flat_text: str) -> list[QuestionAnchor]:

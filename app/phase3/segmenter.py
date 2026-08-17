@@ -12,6 +12,7 @@ import logging
 import re
 from typing import Any
 
+from app.phase3.anchor_detector import looks_like_new_question
 from app.phase3.schemas import AnswerBlock, QuestionAnchor
 
 logger = logging.getLogger(__name__)
@@ -123,9 +124,13 @@ def _split_section_header_blocks(blocks: list[AnswerBlock]) -> list[AnswerBlock]
     2. A real question-numbered anchor (e.g. "5.") whose next 1-2 questions
        lost their number to OCR/handwriting noise — the answer for Q5 keeps
        absorbing Q6's and Q7's text until the next anchor it CAN detect
-       (e.g. "8."). Here the first paragraph genuinely is that question's
-       answer and keeps its label; only the extra trailing paragraphs are
-       unlabeled leftovers for content matching.
+       (e.g. "8."). Here only paragraphs that themselves look like a genuine
+       new question boundary (see looks_like_new_question) get split off as
+       unlabeled leftovers; everything else — section headings, numbered
+       working-steps, closing paragraphs — stays part of THIS answer. A long
+       multi-page descriptive answer routinely has several blank-line
+       paragraphs of its own and must not be shredded down to just the
+       first one.
     """
     expanded: list[AnswerBlock] = []
     for block in blocks:
@@ -137,29 +142,50 @@ def _split_section_header_blocks(blocks: list[AnswerBlock]) -> list[AnswerBlock]
             expanded.append(block)
             continue
 
-        start_idx = 0
-        if not is_section_header:
-            # Keep the first paragraph attached to the real anchor it was
-            # detected under — only the swallowed extras get unlabeled.
-            expanded.append(AnswerBlock(
-                anchor=block.anchor,
-                raw_text=paragraphs[0],
-                visual_elements=block.visual_elements,
-                page_numbers=block.page_numbers,
-            ))
-            start_idx = 1
+        if is_section_header:
+            for para in paragraphs:
+                expanded.append(AnswerBlock(
+                    anchor=QuestionAnchor(
+                        raw_label="",
+                        normalized="",
+                        char_offset=block.anchor.char_offset,
+                        page_number=block.anchor.page_number,
+                        confidence=0.5,
+                        detection_method="section_split",
+                    ),
+                    raw_text=para,
+                    visual_elements=block.visual_elements,
+                    page_numbers=block.page_numbers,
+                ))
+            continue
 
-        for para in paragraphs[start_idx:]:
+        # Real numbered anchor: group paragraphs, starting a new (unlabeled)
+        # group only when a paragraph genuinely looks like the next question.
+        digits = re.sub(r"^Q", "", norm)
+        current_max_num = int(digits) if digits.isdigit() else 0
+
+        groups: list[tuple[QuestionAnchor, list[str]]] = [(block.anchor, [paragraphs[0]])]
+        for para in paragraphs[1:]:
+            is_new, current_max_num = looks_like_new_question(para, current_max_num)
+            if is_new:
+                groups.append((
+                    QuestionAnchor(
+                        raw_label="",
+                        normalized="",
+                        char_offset=block.anchor.char_offset,
+                        page_number=block.anchor.page_number,
+                        confidence=0.5,
+                        detection_method="section_split",
+                    ),
+                    [para],
+                ))
+            else:
+                groups[-1][1].append(para)
+
+        for anchor, parts in groups:
             expanded.append(AnswerBlock(
-                anchor=QuestionAnchor(
-                    raw_label="",
-                    normalized="",
-                    char_offset=block.anchor.char_offset,
-                    page_number=block.anchor.page_number,
-                    confidence=0.5,
-                    detection_method="section_split",
-                ),
-                raw_text=para,
+                anchor=anchor,
+                raw_text="\n\n".join(parts),
                 visual_elements=block.visual_elements,
                 page_numbers=block.page_numbers,
             ))
