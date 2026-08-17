@@ -1,4 +1,3 @@
-# GOT-OCR 2.0 Dependencies for Local Vision-Language OCR Execution
 -r requirements.txt
 torch
 torchvision
