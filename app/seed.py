@@ -244,13 +244,12 @@ def seed_database():
 
         for eval_id_str, reg_no, subject, reg, sem, status, conf, q_pass, review, blur, bright, contrast, skew, is_skew, qual_pass, w, h, noise, res_pass, ocr in eval_samples:
             eval_id = uuid.UUID(eval_id_str)
-            student_hash_val = f"hash_{reg_no}_secret"
 
             ident = session.get(StudentIdentity, eval_id)
             if not ident:
                 ident = StudentIdentity(
                     evaluation_id=eval_id,
-                    student_hash=student_hash_val,
+                    register_number=reg_no,
                     regulation=reg,
                     semester=sem,
                     subject_id=subject,

@@ -257,7 +257,7 @@ export default function AnswerSheetPage({ apiKey }) {
               <LockKeyhole size={17} />
               <span>
                 <strong>Anonymous by design</strong>
-                <small>Raw student identity is never exposed to evaluators. Each file above gets its own register number, hashed independently.</small>
+                <small>Raw student identity is never exposed to evaluators. Each file above gets its own register number, isolated to a single identity record.</small>
               </span>
             </div>
 

@@ -83,7 +83,7 @@ export default function ManualReviewPage({ apiKey }) {
                   </span>
                   <div className="text-xs text-gray-500 mt-1 flex gap-4">
                     <span>Subject: <strong>{item.subject_id}</strong></span>
-                    <span>Student Hash: <strong className="font-mono text-gray-700">{item.student_hash?.substring(0, 16)}...</strong></span>
+                    <span>Register Number: <strong className="font-mono text-gray-700">{item.register_number}</strong></span>
                     <span>Confidence: <strong className="text-amber-700">{item.overall_confidence ? `${(item.overall_confidence * 100).toFixed(1)}%` : 'N/A'}</strong></span>
                   </div>
                 </div>

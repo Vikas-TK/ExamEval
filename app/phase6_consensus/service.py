@@ -46,7 +46,7 @@ def run_phase6_consensus_service(
 
     # Step 1: Validate Student Record
     student_record = db.query(StudentIdentity).filter_by(evaluation_id=evaluation_id).first()
-    student_id = student_record.hashed_register_number if student_record else f"STU-{str(evaluation_id)[:8]}"
+    student_id = student_record.register_number if student_record else f"STU-{str(evaluation_id)[:8]}"
 
     # Step 2: Load Phase 4 Contexts for Question Metadata & Maximum Marks
     repo_ctx = EvaluationContextRepository(db)

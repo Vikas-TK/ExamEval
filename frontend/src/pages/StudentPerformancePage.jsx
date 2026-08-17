@@ -40,7 +40,7 @@ export default function StudentPerformancePage({ apiKey }) {
         <div className="metric-card">
           <span className="metric-label">Evaluated Students</span>
           <strong className="metric-value">{data?.total_students ?? '—'}</strong>
-          <small className="metric-change">Anonymized SHA-256 hashes</small>
+          <small className="metric-change">By register number</small>
         </div>
         <div className="metric-card green-tone">
           <span className="metric-label">Distinction (A+ / A)</span>
@@ -68,7 +68,7 @@ export default function StudentPerformancePage({ apiKey }) {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by student hash or subject ID..."
+              placeholder="Search by register number or subject ID..."
               aria-label="Search student records"
             />
           </label>
@@ -82,7 +82,7 @@ export default function StudentPerformancePage({ apiKey }) {
             <table className="master-table">
               <thead>
                 <tr>
-                  <th>Student Hash</th>
+                  <th>Register Number</th>
                   <th>Subject</th>
                   <th>Regulation</th>
                   <th>Semester</th>
@@ -95,7 +95,7 @@ export default function StudentPerformancePage({ apiKey }) {
                 {(data?.students || []).map((s, idx) => (
                   <tr key={s.evaluation_id || idx}>
                     <td>
-                      <strong className="mono text-xs">{s.student_hash}</strong>
+                      <strong className="mono text-xs">{s.register_number}</strong>
                     </td>
                     <td>
                       <strong>{s.subject_id}</strong>
