@@ -84,9 +84,8 @@ class Phase3Service:
             .filter(StudentIdentity.evaluation_id == evaluation_id)
             .first()
         )
-        # StudentIdentity only stores student_hash (hashed PII)
         if identity:
-            return identity.student_hash[:8] + "..."
+            return identity.register_number
         return None
 
     def run(self, evaluation_id: uuid.UUID, blueprint_id: uuid.UUID) -> Phase3Response:

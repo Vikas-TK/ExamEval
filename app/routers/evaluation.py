@@ -11,7 +11,7 @@ from app.schemas import (
     ManualReviewRequest, ManualReviewItem, ManualReviewListResponse,
 )
 from app.config import get_settings
-from app.security import require_api_key, student_hash
+from app.security import require_api_key
 from app.storage import presigned_url
 
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
@@ -44,10 +44,10 @@ async def submit_evaluation(
 
     evaluation_id = uuid.uuid4()
 
-    # --- Zero-trust boundary: PII written ONLY here, to StudentIdentity ---
+    # --- PII written ONLY here, to StudentIdentity ---
     identity = StudentIdentity(
         evaluation_id=evaluation_id,
-        student_hash=student_hash(register_number),
+        register_number=register_number.strip(),
         regulation=regulation,
         semester=semester,
         subject_id=subject_id,
@@ -163,7 +163,7 @@ def list_manual_reviews(
         items.append(
             ManualReviewItem(
                 evaluation_id=r.evaluation_id,
-                student_hash=identity.student_hash if identity else None,
+                register_number=identity.register_number if identity else None,
                 subject_id=r.subject_id,
                 status=r.status.value,
                 overall_confidence=r.overall_confidence,

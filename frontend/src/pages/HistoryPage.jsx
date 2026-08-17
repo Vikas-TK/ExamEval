@@ -78,7 +78,7 @@ export default function HistoryPage({ apiKey }) {
                 <tr>
                   <th>Evaluation ID</th>
                   <th>Subject</th>
-                  <th>Student Hash</th>
+                  <th>Register Number</th>
                   <th>Status</th>
                   <th>Confidence</th>
                   <th>Quality Gate</th>
@@ -95,7 +95,7 @@ export default function HistoryPage({ apiKey }) {
                       <strong>{item.subject_id}</strong>
                     </td>
                     <td>
-                      <small className="mono">{item.student_hash || 'Anonymized'}</small>
+                      <small className="mono">{item.register_number || 'Unknown'}</small>
                     </td>
                     <td>
                       <StatusBadge status={item.status} />

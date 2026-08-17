@@ -53,7 +53,7 @@ def generate_student_report(db: Session, evaluation_id: uuid.UUID) -> StudentRep
     Generates structured student evaluation breakdown response.
     """
     student_rec = db.query(StudentIdentity).filter_by(evaluation_id=evaluation_id).first()
-    student_id = student_rec.hashed_register_number if student_rec else f"STU-{str(evaluation_id)[:8]}"
+    student_id = student_rec.register_number if student_rec else f"STU-{str(evaluation_id)[:8]}"
     subj_code = student_rec.subject_id if student_rec else "GENERAL"
 
     repo_ctx = EvaluationContextRepository(db)

@@ -118,7 +118,7 @@ def get_student_performance(
     if search:
         term = f"%{search.strip()}%"
         query = query.filter(
-            (StudentIdentity.student_hash.ilike(term)) | (StudentIdentity.subject_id.ilike(term))
+            (StudentIdentity.register_number.ilike(term)) | (StudentIdentity.subject_id.ilike(term))
         )
 
     results = query.order_by(StudentIdentity.created_at.desc()).all()
@@ -133,7 +133,7 @@ def get_student_performance(
 
         items.append({
             "evaluation_id": str(ident.evaluation_id),
-            "student_hash": ident.student_hash,
+            "register_number": ident.register_number,
             "regulation": ident.regulation,
             "semester": ident.semester,
             "subject_id": ident.subject_id,
@@ -185,7 +185,7 @@ def get_evaluation_history(
         items.append({
             "evaluation_id": str(r.evaluation_id),
             "subject_id": r.subject_id,
-            "student_hash": ident.student_hash if ident else None,
+            "register_number": ident.register_number if ident else None,
             "regulation": ident.regulation if ident else "R2021",
             "semester": ident.semester if ident else "SEM-04",
             "status": r.status.value,

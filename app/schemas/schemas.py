@@ -85,7 +85,7 @@ class ManualReviewRequest(BaseModel):
 
 class ManualReviewItem(BaseModel):
     evaluation_id: uuid.UUID
-    student_hash: Optional[str] = None
+    register_number: Optional[str] = None
     subject_id: str
     status: str
     overall_confidence: Optional[float] = None
