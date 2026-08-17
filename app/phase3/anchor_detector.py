@@ -26,10 +26,28 @@ _ANCHOR_PATTERNS: list[tuple[re.Pattern[str], float]] = [
     (re.compile(r"(?i)(?:^|\n)\s*(?:Q(?:uestion)?|Ans(?:wer)?)\.?\s*(\d{1,3}[a-z]?)\b", re.M), 0.95),
     # 2. Standalone line-start numbering: "1.", "1)", "1:", "1 -", "13.", "18.", "18.1"
     (re.compile(r"(?:^|\n)\s*(\d{1,3}(?:\.\d{1,2})?[a-z]?)\s*[\.\):\-\s]\s*", re.M), 0.90),
-    # 3. Sub-questions: (a), (b), 13(a), Q13(a)
+    # 3. Parenthesized top-level numbering: "(19)", "(16)" — some long-answer
+    #    headings get transcribed with the digit wrapped in parens instead of
+    #    followed by "." or ")"; Pattern 2 can't match this shape at all
+    #    since it requires the digit first, not wrapped.
+    (re.compile(r"(?:^|\n)\s*\((\d{1,3})\)\s*", re.M), 0.90),
+    # 4. Compound top-level "OR"-alternative numbering: "19(a)", "13(b)" — an
+    #    "answer 19(a) OR 19(b)" style choice question in its own right, not
+    #    a bare sub-part of a preceding question, so the whole thing (digit
+    #    + choice letter) must be captured as one anchor. Must come before
+    #    Pattern 5 below: without this, "19(a)" only matches Pattern 5's
+    #    bare "(a)", losing the "19" and leaving a dangling lettered anchor
+    #    that has nothing real to be a sub-part of.
+    (re.compile(r"(?:^|\n)\s*(\d{1,3}\s*\([a-z]\))\s+", re.M | re.I), 0.90),
+    # 5. Sub-questions: (a), (b), (i), (ii)
     (re.compile(r"(?:^|\n)\s*(?:\d{1,3}\s*)?\(([a-z]|[ivx]+)\)\s+", re.M | re.I), 0.85),
-    # 4. Part A / Section A
-    (re.compile(r"(?i)(?:^|\n)\s*(Part\s+[A-Z]|Section\s+[A-Z])\b", re.M), 0.80),
+    # 6. Part A / Section A — accepts a hyphen or colon between the word and
+    #    the letter too ("Part-D", "Part: A"), not just whitespace, since
+    #    handwritten/OCR'd headers commonly use a hyphen there. This match
+    #    is what lets _apply_sequence_guard reset its per-section numbering
+    #    floor; missing it silently breaks every later Part's real anchors
+    #    whenever a student answers sections out of increasing order.
+    (re.compile(r"(?i)(?:^|\n)\s*(Part\s*[-:]?\s*[A-Z]|Section\s*[-:]?\s*[A-Z])\b", re.M), 0.80),
 ]
 
 # Noise patterns — anchors matching these are discarded
@@ -44,10 +62,11 @@ _NOISE_PATTERNS: list[re.Pattern[str]] = [
 
 _LOW_CONFIDENCE_THRESHOLD = 0.85
 
-# A bare numeric anchor ("13", "13a", "18.1") — used to tell a real top-level
-# question number apart from a sub-numbered continuation of the one just
-# accepted (group 2 = decimal sub-part, group 3 = trailing letter sub-part).
-_NUMERIC_LABEL_RE = re.compile(r"^(\d{1,3})(?:\.(\d{1,2})|([a-z]))?$", re.I)
+# A bare numeric anchor ("13", "13a", "18.1", "19(a)") — used to tell a real
+# top-level question number apart from a sub-numbered continuation of the
+# one just accepted (group 2 = decimal sub-part, group 3 = trailing letter
+# sub-part, group 4 = parenthesized "OR"-alternative choice letter).
+_NUMERIC_LABEL_RE = re.compile(r"^(\d{1,3})(?:\.(\d{1,2})|([a-z])|\s*\(([a-z])\))?$", re.I)
 # A bare letter/roman sub-part label ("a", "ii") with no digits at all.
 _ROMAN_OR_LETTER_RE = re.compile(r"^[a-z]{1,4}$", re.I)
 # How close (in characters) a lettered/roman sub-part must sit to the anchor
@@ -79,7 +98,7 @@ def _normalize_label(raw: str) -> str:
     if stripped.isdigit():
         return f"Q{stripped}"
 
-    if re.match(r"^(PART|SECTION)\s+[A-Z]", stripped):
+    if re.match(r"^(PART|SECTION)\s*[-:]?\s*[A-Z]", stripped):
         return stripped
 
     return f"Q{stripped}" if len(stripped) <= 3 and not stripped.startswith("Q") else stripped
@@ -161,11 +180,21 @@ def _apply_sequence_guard(anchors: list[QuestionAnchor]) -> list[QuestionAnchor]
         if numeric_match:
             num = int(numeric_match.group(1))
             has_subpart = bool(numeric_match.group(2)) or bool(numeric_match.group(3))
+            # A parenthesized "OR"-choice letter ("19(a)", "19(b)") is a
+            # top-level anchor in its own right, not a continuation of an
+            # already-open number — it's accepted like a fresh top-level
+            # number (group 4 set, num == section_max_num covers the second
+            # alternative appearing after the first was already accepted).
+            is_choice_form = bool(numeric_match.group(4))
             close_enough = (anchor.char_offset - last_accepted_offset) <= _SUBPART_PROXIMITY_CHARS
             if has_subpart and num == section_max_num and close_enough:
                 accepted.append(anchor)
                 last_accepted_offset = anchor.char_offset
-            elif not has_subpart and (section_max_num == 0 or num > section_max_num):
+            elif not has_subpart and (
+                section_max_num == 0
+                or num > section_max_num
+                or (is_choice_form and num == section_max_num)
+            ):
                 accepted.append(anchor)
                 section_max_num = num
                 last_accepted_offset = anchor.char_offset
@@ -202,7 +231,7 @@ def looks_like_new_question(text: str, current_max_num: int) -> tuple[bool, int]
     can thread it through consecutive paragraphs in one pass.
     """
     probe = "\n" + text.lstrip("\n")
-    for pattern, _ in _ANCHOR_PATTERNS[:3]:  # numeric/Q-prefixed/sub-part only — not Part/Section
+    for pattern, _ in _ANCHOR_PATTERNS[:5]:  # numeric/Q-prefixed/paren-numeric/choice-form/sub-part only — not Part/Section
         m = pattern.match(probe)
         if not m:
             continue
@@ -215,9 +244,10 @@ def looks_like_new_question(text: str, current_max_num: int) -> tuple[bool, int]
         if numeric_match:
             num = int(numeric_match.group(1))
             has_subpart = bool(numeric_match.group(2)) or bool(numeric_match.group(3))
+            is_choice_form = bool(numeric_match.group(4))
             if has_subpart:
                 return False, current_max_num
-            if current_max_num == 0 or num > current_max_num:
+            if current_max_num == 0 or num > current_max_num or (is_choice_form and num == current_max_num):
                 return True, num
             return False, current_max_num
 

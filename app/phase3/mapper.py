@@ -459,8 +459,25 @@ def map_answers_to_blueprint(
     # anchor_text, and anchor_confidence for every question are untouched;
     # it only ever extends a student_answer that already exists, so it
     # cannot change any result that was already correct.
+    #
+    # Unlike passes 2-3, this pool also includes LABELED blocks whose label
+    # doesn't match any real blueprint question — e.g. an in-prose worked
+    # example ("(i) Ms. Dhoni", "(ii) New Delhi") inside a long essay gets
+    # detected as sub-question anchors "(i)"/"(ii)", but no blueprint
+    # question is actually numbered "i"/"ii". Passes 2-3 must never touch a
+    # labeled block (that's what stops a real "2"-labeled answer from being
+    # stolen by a different question), but that protection is meaningless
+    # here — there is no real question "i"/"ii" for this content to be
+    # stolen from, so leaving it excluded only means it vanishes for good.
     all_claimed_ids = used_block_ids | {id(b) for b in qid_to_block.values()}
-    truly_orphaned = [b for b in leftover_blocks if id(b) not in all_claimed_ids]
+    bp_normalized_numbers = {_normalize_qno(bq.question_number) for bq in bp_questions}
+    pass4_pool = [
+        b for b in blocks
+        if id(b) not in all_claimed_ids
+        and _looks_like_answer(b.raw_text)
+        and (not b.anchor.normalized or _normalize_qno(b.anchor.normalized) not in bp_normalized_numbers)
+    ]
+    truly_orphaned = pass4_pool
 
     appended_text: dict[str, list[str]] = {}
     if truly_orphaned:

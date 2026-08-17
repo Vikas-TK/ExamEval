@@ -207,3 +207,77 @@ def test_orphaned_fragment_is_reattached_not_dropped():
     assert q19a.mapping_status == "MAPPED"
     assert "compresses input data" in q19a.student_answer
     assert "zzqq wobble frobnicate" in q19a.student_answer
+
+
+def test_sections_answered_out_of_order_still_isolate_correctly():
+    """
+    A student is free to answer optional/choice sections in whatever order
+    they like — writing Part D right after Part A, then Part C, then Part B,
+    is completely normal. Two things must both work for this to map
+    correctly: (1) "Part-D"/"Part-C"/"Part-B" (hyphenated, not "Part D"
+    with a space) must register as real section-boundary anchors so the
+    monotonic-sequence guard resets its numbering floor at each one —
+    otherwise every later, lower-numbered Part's real questions get
+    rejected as "internal list markers" once a higher number (19) was
+    already accepted; and (2) "19(a)" must be captured as one compound
+    top-level anchor, not just its trailing "(a)" losing the "19".
+    """
+    ocr_json = _ocr([
+        "Part-A\n"
+        "1. a) sparse Autoencoder\n"
+        "2. True\n",
+
+        "Part-D\n"
+        "19(a) Denoising Autoencoder:\n"
+        "Denoising encoder is used to enhance the noisy input into a clearer "
+        "form using a bottleneck.\n",
+
+        "Part-c\n"
+        "17. Named Entity Recognition:(NER)\n"
+        "NER is used to recognize a word from the given data and identify "
+        "the predefined entity.\n",
+
+        "Part-B\n"
+        "13. Standard Autoencoders can perform well on low-dimensional data, "
+        "while Sparse Autoencoders perform better on high-dimensional data.\n"
+        "14. GAN has two networks: Generative and Discriminative.\n",
+    ])
+    blueprint_json = _blueprint([
+        ("Part A", [
+            ("q1", "1", 0.5, "Which autoencoder reduces overfitting?"),
+            ("q2", "2", 0.5, "True or False."),
+        ]),
+        ("Part B", [
+            ("q13", "13", 2.0, "Compare standard vs sparse autoencoders."),
+            ("q14", "14", 2.0, "Determine the suitability of GANs."),
+        ]),
+        ("Part C", [
+            ("q17", "17", 14.0, "Demonstrate NER using deep learning."),
+        ]),
+        ("Part D", [
+            ("q19a", "19(a)", 10.0, "Explain the denoising autoencoder."),
+        ]),
+    ])
+
+    mapped = _run(ocr_json, blueprint_json)
+
+    q1 = _by_id(mapped, "q1")
+    q2 = _by_id(mapped, "q2")
+    q13 = _by_id(mapped, "q13")
+    q14 = _by_id(mapped, "q14")
+    q17 = _by_id(mapped, "q17")
+    q19a = _by_id(mapped, "q19a")
+
+    for q in (q1, q2, q13, q14, q17, q19a):
+        assert q.mapping_status == "MAPPED", f"{q.question_id} was {q.mapping_status}"
+
+    assert "sparse Autoencoder" in q1.student_answer
+    assert "True" in q2.student_answer
+    assert "Standard Autoencoders" in q13.student_answer
+    assert "GAN has two networks" in q14.student_answer
+    assert "Named Entity Recognition" in q17.student_answer
+    assert "Denoising encoder" in q19a.student_answer
+
+    # None of Part B/C/D's content leaked backward into Part A's short answers.
+    assert "Denoising" not in q1.student_answer
+    assert "GAN" not in q2.student_answer
