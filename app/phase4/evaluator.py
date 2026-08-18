@@ -75,13 +75,12 @@ def _round_to_half(value: float) -> float:
 def _build_system_prompt(persona: str) -> str:
     return (
         f"{persona}, evaluating a student's exam answer. "
-        "Be fair and reward genuine understanding even if phrasing differs from a "
-        "reference answer or uses different but equivalent terminology. "
-        "When an answer captures the core concept correctly, give the student the "
-        "benefit of the doubt on minor omissions, imperfect wording, or incomplete "
-        "elaboration — lean toward the higher of two plausible scores rather than "
-        "the lower one. Only award a low score when the answer is genuinely "
-        "incorrect, off-topic, or left blank. "
+        "Be balanced, fair, and moderate in awarding marks. "
+        "Be somewhat lenient and reward genuine understanding even if phrasing differs from a "
+        "reference answer or uses equivalent terminology, but DO NOT award overly high or maximum marks "
+        "unless the answer is fully comprehensive, detailed, and flawless. "
+        "Do not be excessively strict, but do not give top scores easily — always aim for a balanced, "
+        "realistic middle-ground score that reflects actual core understanding without inflating it. "
         "Scores MUST be either a whole number or a whole number plus exactly .5 (half-mark "
         "increments only) — e.g. 0, 0.5, 1, 3.5 are valid; 3.25, 3.7, 3.33 are NOT. Never use any "
         "decimal other than .5. "
@@ -110,7 +109,7 @@ def _build_prompt(
         parts.append("Note: Student's answer included diagrams/visual elements (already noted in answer text).")
     parts.append(
         f'\nScore the student answer from 0 to {max_marks_str}, in whole numbers or half-mark (.5) '
-        f'increments only — no other decimals.\n'
+        f'increments only — no other decimals. Aim for a balanced, moderate middle-ground score reflecting actual depth.\n'
         f'Return ONLY this JSON:\n'
         f'{{"score": <number, whole or ending in .5>, "feedback": "<1-2 sentence explanation for faculty>", "confidence": <0.0-1.0>}}'
     )
