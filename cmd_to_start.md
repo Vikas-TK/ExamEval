@@ -21,6 +21,11 @@ cd D:\exam_eval_platform\exam_eval_platform
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+
+#- Start the backend in Linux
+.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+
 ✅ Backend is running when you see:
 ```
 INFO:     Uvicorn running on http://0.0.0.0:8000

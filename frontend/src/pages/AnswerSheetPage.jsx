@@ -301,7 +301,7 @@ export default function AnswerSheetPage({ apiKey }) {
               <div className="result-heading">
                 <span className="result-icon"><FileText size={18} /></span>
                 <div>
-                  <strong>{result.evaluation_id}</strong>
+                  <strong>{result.register_number || selected?.filename || 'Unknown'}</strong>
                   <small>{result.subject_id}</small>
                 </div>
                 <StatusBadge status={result.status || 'PROCESSING'} />

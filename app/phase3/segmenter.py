@@ -74,8 +74,12 @@ def segment_answers(
     blocks: list[AnswerBlock] = []
 
     for i, anchor in enumerate(anchors):
-        # The answer text starts after the anchor label ends
-        answer_start = anchor.char_offset + len(anchor.raw_label)
+        # The answer text starts after the anchor label ends. label_end_offset
+        # is the real position right after the full label match (including any
+        # trailing separator punctuation) — NOT char_offset + len(raw_label),
+        # which is off by however much leading whitespace/newline the pattern
+        # consumed before the label itself began.
+        answer_start = anchor.label_end_offset
 
         # Answer ends at the start of the next anchor (or end of text)
         if i + 1 < len(anchors):
@@ -157,6 +161,7 @@ def _split_section_header_blocks(
                         raw_label="",
                         normalized="",
                         char_offset=block.anchor.char_offset,
+                        label_end_offset=block.anchor.char_offset,
                         page_number=block.anchor.page_number,
                         confidence=0.5,
                         detection_method="section_split",
@@ -181,6 +186,7 @@ def _split_section_header_blocks(
                         raw_label="",
                         normalized="",
                         char_offset=block.anchor.char_offset,
+                        label_end_offset=block.anchor.char_offset,
                         page_number=block.anchor.page_number,
                         confidence=0.5,
                         detection_method="section_split",

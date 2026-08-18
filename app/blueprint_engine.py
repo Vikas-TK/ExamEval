@@ -126,6 +126,23 @@ def _clean_question(text: str) -> str:
     return re.sub(r"\s+", " ", _MARKS_RE.sub("", text)).strip(" .-:;\n")
 
 
+_LEADING_SUBLETTER_RE = re.compile(r"^\(?([a-z])\)\s+", re.I)
+
+
+def _leading_subletter(text: str) -> str | None:
+    """
+    Detect a leading "a)"/"(b)" sub-part marker at the very start of a
+    question's cleaned text. An either/or pair printed as "19. a) ..." /
+    "19. b) ..." puts the sub-letter as a token SEPARATE from the number
+    (number, punctuation, space, letter) — _EXPLICIT_Q_START's fused
+    `\\d+[a-z]?` capture only catches a letter glued directly onto the
+    digits (e.g. "19a)"), so this format's letter lands at the start of
+    rest_of_line/question_text instead, which is where this looks.
+    """
+    m = _LEADING_SUBLETTER_RE.match(text)
+    return m.group(1).lower() if m else None
+
+
 def preprocess_ocr_text(text: str) -> str:
     """
     Preprocess OCR text to insert newlines before inline question numbers
@@ -226,6 +243,29 @@ def _regex_sections(text: str) -> list[BlueprintSection]:
                 q_num_clean = str(current_q_no).strip()
                 if not q_num_clean.lower().startswith("q"):
                     q_num_clean = f"Q{q_num_clean}"
+
+                # Either/or sibling ("19. a) ..." / "19. b) ..."): both share
+                # the same base number, so without this they'd get identical
+                # question_id/question_number and one silently collides with
+                # the other downstream (Phase 3 would attach one student
+                # answer to both blueprint entries). Fold the sub-letter in
+                # when this question's base number repeats the immediately
+                # preceding one AND a leading "a)"/"b)" marker is present —
+                # and retroactively give the first sibling its own letter
+                # too, since only the second entry would otherwise be caught.
+                sub_letter = _leading_subletter(cleaned)
+                if (
+                    sub_letter
+                    and current_questions
+                    and current_questions[-1].question_number.upper() == q_num_clean.upper()
+                ):
+                    prev = current_questions[-1]
+                    if not prev.question_number.upper().endswith(")"):
+                        prev_letter = _leading_subletter(prev.question_text) or "a"
+                        prev.question_number = f"{prev.question_number}({prev_letter})"
+                        prev.question_id = f"q-{prev.question_number.lower()}"
+                    q_num_clean = f"{q_num_clean}({sub_letter})"
+
                 current_questions.append(BlueprintQuestion(
                     question_id=f"q-{q_num_clean.lower()}",
                     question_number=q_num_clean,

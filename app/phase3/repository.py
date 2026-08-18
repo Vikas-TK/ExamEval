@@ -33,13 +33,25 @@ class QAMappingRepository:
     ) -> QuestionAnswerMapping:
         """
         Insert or update a QuestionAnswerMapping row.
-        Upsert key: (evaluation_id, question_id).
+        Upsert key: (evaluation_id, question_id, question_sequence).
+
+        question_sequence is included because question_id alone isn't
+        guaranteed unique per evaluation: a blueprint can give two distinct
+        questions the same question_id (e.g. an either/or pair like
+        "19(a)"/"19(b)" whose upstream generation collapsed both onto
+        "q-q19" — see mapper.py's duplicate_loser_indices handling). Keying
+        on (evaluation_id, question_id) alone would match either row
+        ambiguously on re-mapping, silently clobbering one and leaving the
+        other stale. question_sequence is stable across re-runs of the same
+        blueprint (assigned deterministically by enumerate(bp_questions) in
+        map_answers_to_blueprint), so it safely disambiguates them.
         """
         existing: QuestionAnswerMapping | None = (
             self._db.query(QuestionAnswerMapping)
             .filter(
                 QuestionAnswerMapping.evaluation_id == mqa.evaluation_id,
                 QuestionAnswerMapping.question_id == mqa.question_id,
+                QuestionAnswerMapping.question_sequence == mqa.question_sequence,
             )
             .first()
         )

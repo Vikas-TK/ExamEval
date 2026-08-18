@@ -65,6 +65,7 @@ class S3Urls(BaseModel):
 class EvaluationRecordOut(BaseModel):
     evaluation_id: uuid.UUID
     subject_id: str
+    register_number: Optional[str] = None
     status: str
     quality_report: Optional[QualityReport] = None
     ocr_data: Optional[OCRData] = None

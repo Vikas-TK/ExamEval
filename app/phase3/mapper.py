@@ -29,6 +29,37 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _call_local_llm_json(system: str, user: str, max_tokens: int) -> dict | None:
+    """
+    Shared local-LLM call used by every Phase 3 correction pass: OpenAI-
+    compatible request to the local Ollama/Qwen endpoint, fence-stripped JSON
+    parse. Returns None on any failure (network, timeout, malformed JSON) so
+    callers fall back to their non-LLM result.
+    """
+    try:
+        from openai import OpenAI
+        client = OpenAI(
+            api_key=settings.qwen_api_key,
+            base_url=settings.qwen_api_base,
+            timeout=30.0,
+            max_retries=1,
+        )
+        response = client.chat.completions.create(
+            model=settings.llm_model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.0,
+            max_tokens=max_tokens,
+            extra_body={"options": {"num_ctx": settings.qwen_num_ctx}},
+        )
+        raw = (response.choices[0].message.content or "{}").strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.splitlines()[1:-1])
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning("Local LLM call failed: %s", exc)
+        return None
+
+
 def _llm_semantic_match(
     blocks: list[AnswerBlock], bp_questions: list[BlueprintQuestion]
 ) -> dict[int, str]:
@@ -39,64 +70,151 @@ def _llm_semantic_match(
     {block_index: question_id}. Empty dict on any failure so callers can fall
     back to positional matching rather than crash the mapping step.
     """
+    q_lines = "\n".join(
+        f"{i}: [{bq.question_id}] {bq.question_text or bq.question_number}"
+        for i, bq in enumerate(bp_questions)
+    )
+    a_lines = "\n".join(
+        f"{i}: {(block.raw_text or '')[:220]}"
+        for i, block in enumerate(blocks)
+    )
+    system = (
+        "You match exam answer paragraphs to the question they answer, using content and "
+        "meaning only — the answer sheet has no visible question numbers next to the answers. "
+        "Each answer maps to at most one question; leave a question unmatched if no answer "
+        "addresses it, and leave an answer unmatched if it fits no question well. "
+        "Return ONLY a JSON object of the form {\"<answer_index>\": \"<question_id>\", ...} "
+        "using the indices and question_ids given below — no commentary, no markdown fences."
+    )
+    user = f"QUESTIONS:\n{q_lines}\n\nANSWERS:\n{a_lines}"
+    mapping = _call_local_llm_json(system, user, max_tokens=1024)
+    if mapping is None:
+        return {}
+
+    # Small local models often echo back the question's list index
+    # instead of the literal question_id we asked for — accept either.
+    valid_ids = {bq.question_id for bq in bp_questions}
+    by_index0 = {str(i): bq.question_id for i, bq in enumerate(bp_questions)}
+    by_index1 = {str(i + 1): bq.question_id for i, bq in enumerate(bp_questions)}
+
+    resolved: dict[int, str] = {}
+    for k, v in mapping.items():
+        if not str(k).isdigit() or int(k) >= len(blocks):
+            continue
+        v = str(v)
+        if v in valid_ids:
+            resolved[int(k)] = v
+        elif v in by_index0:
+            resolved[int(k)] = by_index0[v]
+        elif v in by_index1:
+            resolved[int(k)] = by_index1[v]
+    return resolved
+
+
+def _llm_verify_uncertain_matches(
+    blocks: list[AnswerBlock],
+    bp_questions: list[BlueprintQuestion],
+    direct_matches: dict[str, AnswerBlock],
+    uncertain_question_ids: set[str],
+) -> dict[str, str]:
+    """
+    Pass 1.5 — reviews only the blueprint questions whose Pass 1 match looks
+    shaky (no match, low regex confidence, or a non-regex anchor such as an
+    out-of-order sequence-guard rescue). The LLM sees the FULL blueprint
+    question list (so it has sibling-question context, e.g. an "answer any
+    two of 16/17/18" choice group, even though the blueprint JSON has no
+    structured choice-group field) and the full document-order block
+    sequence, but is only asked to confirm/correct the uncertain subset.
+
+    Returns {question_id: block_id} for reassignments the caller should
+    apply — the caller (map_answers_to_blueprint) still re-validates every
+    entry against the closed set of real question_ids and a keyword-overlap
+    grounding check before trusting it, exactly like _llm_semantic_match.
+    Empty dict on any failure or when nothing is confidently resolvable.
+    """
+    if not uncertain_question_ids:
+        return {}
+
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=settings.qwen_api_key,
-            base_url=settings.qwen_api_base,
-            timeout=30.0,
-            max_retries=1,
-        )
-
         q_lines = "\n".join(
-            f"{i}: [{bq.question_id}] {bq.question_text or bq.question_number}"
-            for i, bq in enumerate(bp_questions)
+            f"[{bq.question_id}] Q{bq.question_number} ({bq.section_name}): "
+            f"{(bq.question_text or '')[:160]}"
+            for bq in bp_questions
         )
-        a_lines = "\n".join(
-            f"{i}: {(block.raw_text or '')[:220]}"
-            for i, block in enumerate(blocks)
-        )
+
+        doc_lines: list[str] = []
+        current_qids: dict[str, str] = {}
+        for bq in bp_questions:
+            block = direct_matches.get(bq.question_id)
+            if block is not None:
+                current_qids[str(id(block))] = bq.question_id
+
+        for block in blocks:
+            bid = str(id(block))
+            anchor = block.anchor
+            current = current_qids.get(bid, "UNASSIGNED")
+            doc_lines.append(
+                f"{bid}: label='{anchor.raw_label}' conf={anchor.confidence:.2f} "
+                f"method={anchor.detection_method} -> currently: {current} | "
+                f"text: {(block.raw_text or '')[:160]}"
+            )
+
+        uncertain_block_ids = {
+            str(id(direct_matches[qid]))
+            for qid in uncertain_question_ids
+            if qid in direct_matches
+        }
+
         system = (
-            "You match exam answer paragraphs to the question they answer, using content and "
-            "meaning only — the answer sheet has no visible question numbers next to the answers. "
-            "Each answer maps to at most one question; leave a question unmatched if no answer "
-            "addresses it, and leave an answer unmatched if it fits no question well. "
-            "Return ONLY a JSON object of the form {\"<answer_index>\": \"<question_id>\", ...} "
-            "using the indices and question_ids given below — no commentary, no markdown fences."
+            "You are verifying a provisional exam answer-to-question mapping. You will be given "
+            "the full list of valid blueprint question IDs (grouped by section), the document-order "
+            "sequence of detected answer blocks with their regex-detected label, confidence, and a "
+            "text snippet, and the CURRENT provisional assignment for each block. For each block "
+            "listed under UNCERTAIN, either confirm the current assignment, reassign it to a "
+            "DIFFERENT question_id from the exact list given, or return null if genuinely "
+            "unresolvable. You must NEVER output a question_id that is not in the provided list. "
+            "Return ONLY a JSON object {\"<block_id>\": \"<question_id-or-null>\", ...} — no "
+            "commentary, no markdown fences."
         )
-        user = f"QUESTIONS:\n{q_lines}\n\nANSWERS:\n{a_lines}"
-        response = client.chat.completions.create(
-            model=settings.llm_model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0.0,
-            max_tokens=1024,
-            extra_body={"options": {"num_ctx": settings.qwen_num_ctx}},
+        user = (
+            f"BLUEPRINT QUESTIONS (by section):\n{q_lines}\n\n"
+            f"DOCUMENT SEQUENCE:\n{chr(10).join(doc_lines)}\n\n"
+            f"UNCERTAIN (review these): {', '.join(sorted(uncertain_block_ids))}"
         )
-        raw = (response.choices[0].message.content or "{}").strip()
-        if raw.startswith("```"):
-            raw = "\n".join(raw.splitlines()[1:-1])
-        mapping = json.loads(raw)
+        mapping = _call_local_llm_json(system, user, max_tokens=1024)
+        if not mapping:
+            return {}
 
-        # Small local models often echo back the question's list index
-        # instead of the literal question_id we asked for — accept either.
         valid_ids = {bq.question_id for bq in bp_questions}
-        by_index0 = {str(i): bq.question_id for i, bq in enumerate(bp_questions)}
-        by_index1 = {str(i + 1): bq.question_id for i, bq in enumerate(bp_questions)}
+        blocks_by_bid = {str(id(b)): b for b in blocks}
+        q_tokens_by_id = {
+            bq.question_id: _tokenize(bq.question_text or bq.question_number)
+            for bq in bp_questions
+        }
 
-        resolved: dict[int, str] = {}
-        for k, v in mapping.items():
-            if not str(k).isdigit() or int(k) >= len(blocks):
+        corrections: dict[str, str] = {}
+        claimed_qids: set[str] = set()
+        for bid, qid in mapping.items():
+            if qid is None:
                 continue
-            v = str(v)
-            if v in valid_ids:
-                resolved[int(k)] = v
-            elif v in by_index0:
-                resolved[int(k)] = by_index0[v]
-            elif v in by_index1:
-                resolved[int(k)] = by_index1[v]
-        return resolved
+            qid = str(qid)
+            if bid not in uncertain_block_ids or bid not in blocks_by_bid:
+                continue
+            if qid not in valid_ids:
+                continue
+            if qid in claimed_qids:
+                continue
+            block = blocks_by_bid[bid]
+            q_tokens = q_tokens_by_id.get(qid, set())
+            b_tokens = _tokenize(block.raw_text)
+            if q_tokens and not (q_tokens & b_tokens):
+                continue
+            corrections[qid] = bid
+            claimed_qids.add(qid)
+
+        return corrections
     except Exception as exc:
-        logger.warning("Semantic content-matching fallback failed: %s", exc)
+        logger.warning("LLM verification pass failed: %s", exc)
         return {}
 
 
@@ -288,11 +406,20 @@ def map_answers_to_blueprint(
     blueprint: dict[str, Any],
     evaluation_id: uuid.UUID,
     blueprint_id: uuid.UUID,
+    stats: dict[str, Any] | None = None,
 ) -> list[MappedQA]:
     """
     Map AnswerBlocks to blueprint questions, returning one MappedQA per blueprint question.
 
     Fault-tolerant: a failed mapping for one question does NOT stop others.
+
+    stats, when passed, is populated with 'orphaned_fragments_reattached' —
+    the count of answer fragments Pass 4's safety net had to glue onto a
+    neighboring question because nothing could confidently claim them as its
+    own. A non-zero count is the caller's signal that some content in this
+    evaluation couldn't be cleanly attributed to its real question (as
+    opposed to a question the student genuinely left blank, which never
+    reaches Pass 4 at all).
     """
     blocks = _merge_repeat_collisions(blocks)
     bp_questions = _extract_blueprint_questions(blueprint)
@@ -330,6 +457,21 @@ def map_answers_to_blueprint(
         key = _normalize_qno(block.anchor.normalized)
         block_index.setdefault(key, block)
 
+    # A choice question written as "19(a)" / "19(b)" shares the same digits
+    # once stripped down to "19" — the fuzzy digit fallback below must never
+    # auto-resolve those, since it can't tell which sibling an ambiguous bare
+    # "19)" label (row-number and choice-letter transcribed as two separate
+    # tokens, rather than the fused "19(b)" form) was meant to answer. Left
+    # unguarded, both siblings independently fuzzy-match the SAME block and
+    # the student's one answer gets duplicated onto both — see Pass 1b below,
+    # which resolves these by content instead of guessing from the digit.
+    digit_counts: dict[str, int] = {}
+    for bq in bp_questions:
+        dkey = _strip_digits(bq.question_number)
+        if dkey:
+            digit_counts[dkey] = digit_counts.get(dkey, 0) + 1
+    ambiguous_digit_keys = {k for k, c in digit_counts.items() if c > 1}
+
     # Pass 1: direct number-based matching only (exact + fuzzy digit).
     # This must run per-question BEFORE any semantic matching so that a
     # well-labeled question elsewhere in the paper (e.g. Q11 in Part B)
@@ -342,7 +484,7 @@ def map_answers_to_blueprint(
         block = block_index.get(norm_key)
         if block is None:
             dkey = _strip_digits(bq.question_number)
-            if dkey:
+            if dkey and dkey not in ambiguous_digit_keys:
                 for bk, blk in block_index.items():
                     if _strip_digits(bk) == dkey:
                         block = blk
@@ -351,6 +493,86 @@ def map_answers_to_blueprint(
             direct_matches[bq.question_id] = block
         else:
             unmatched_questions.append(bq)
+
+    # Pass 1b: resolve the ambiguous digit groups Pass 1 deliberately skipped,
+    # by content instead of position — the bare-digit block ("19)") is still
+    # sitting unclaimed in block_index, so score it against ONLY its sibling
+    # choice-questions with the same keyword-overlap logic as the lexical
+    # pass. Whichever sibling the student actually wrote about wins; a
+    # sibling with no textual overlap at all correctly stays unanswered
+    # rather than inheriting a copy of the answer meant for its twin.
+    if ambiguous_digit_keys:
+        ambiguous_questions = [
+            bq for bq in unmatched_questions
+            if _strip_digits(bq.question_number) in ambiguous_digit_keys
+        ]
+        ambiguous_blocks = [
+            blk for bk, blk in block_index.items()
+            if _strip_digits(bk) in ambiguous_digit_keys
+        ]
+        if ambiguous_questions and ambiguous_blocks:
+            resolved = _lexical_match(ambiguous_blocks, ambiguous_questions)
+            for bidx, qid in resolved.items():
+                direct_matches[qid] = ambiguous_blocks[bidx]
+            if resolved:
+                unmatched_questions = [
+                    bq for bq in unmatched_questions if bq.question_id not in resolved.values()
+                ]
+                logger.info(
+                    "Ambiguous choice-group resolution matched %d/%d question(s) by content.",
+                    len(resolved), len(ambiguous_questions),
+                )
+
+    # Pass 1.5: LLM correction pass for individually shaky Pass 1 matches —
+    # no match at all, low regex confidence, or a non-regex anchor (e.g. an
+    # out-of-order sequence-guard rescue). Scoped per-question rather than
+    # per-document: a confident, plain-regex exact match is never sent to
+    # the LLM, so well-formed scripts incur zero added latency/cost. Every
+    # correction is re-validated below against the closed set of real
+    # question_ids and a keyword-overlap grounding check before being
+    # trusted — the LLM can confirm/correct/abstain but never invent a
+    # question number that doesn't exist in the blueprint.
+    uncertain_question_ids = {
+        bq.question_id for bq in bp_questions
+        if bq.question_id not in direct_matches
+        or direct_matches[bq.question_id].anchor.confidence
+        < settings.phase3_llm_verification_confidence_threshold
+        or direct_matches[bq.question_id].anchor.detection_method != "regex"
+    }
+    if settings.phase3_llm_verification_enabled and uncertain_question_ids and bp_questions:
+        corrections = _llm_verify_uncertain_matches(
+            blocks, bp_questions, direct_matches, uncertain_question_ids
+        )
+        if corrections:
+            # A block moving from question A to question B must vacate A's
+            # stale claim first — otherwise A and B would both point at the
+            # same block once B's new assignment is applied below.
+            moved_bids = set(corrections.values())
+            for qid in uncertain_question_ids:
+                block = direct_matches.get(qid)
+                if (
+                    block is not None
+                    and str(id(block)) in moved_bids
+                    and corrections.get(qid) != str(id(block))
+                ):
+                    del direct_matches[qid]
+
+            applied = 0
+            for qid, bid in corrections.items():
+                block = next((b for b in blocks if str(id(b)) == bid), None)
+                if block is None:
+                    continue
+                direct_matches[qid] = block
+                applied += 1
+
+            unmatched_questions = [
+                bq for bq in bp_questions if bq.question_id not in direct_matches
+            ]
+            if applied:
+                logger.info(
+                    "LLM verification pass corrected/confirmed %d uncertain match(es).",
+                    applied,
+                )
 
     # Pass 2: content-based semantic match, scoped to ONLY the questions
     # still unresolved and the blocks not already claimed by pass 1 (labeled
@@ -501,11 +723,41 @@ def map_answers_to_blueprint(
                 appended_text.setdefault(nearest_qid, []).append(orphan.raw_text)
 
         if appended_text:
+            reattached_count = sum(len(v) for v in appended_text.values())
             logger.info(
                 "Safety-net pass: reattached %d orphaned fragment(s) to their "
                 "nearest preceding mapped question instead of dropping them.",
-                sum(len(v) for v in appended_text.values()),
+                reattached_count,
             )
+            if stats is not None:
+                stats["orphaned_fragments_reattached"] = reattached_count
+
+    # Safety net for either/or question pairs whose blueprint generation gave
+    # both sub-parts the SAME question_id (e.g. "19(a)"/"19(b)" both stored as
+    # "q-q19") — a block is looked up by question_id, so every duplicate would
+    # otherwise receive the identical answer text and produce duplicate mapped
+    # rows for one physical answer. Resolve ahead of the main loop: for any
+    # question_id shared by more than one blueprint question, keep only the
+    # entry whose question_text best token-overlaps the matched block's answer
+    # (the sub-part the student actually attempted) as MAPPED; every other
+    # sibling falls through to the existing "no block" branch below and comes
+    # out SKIPPED — which is exactly correct here, since the student did skip
+    # that alternative in favor of the winning one.
+    id_to_indices: dict[str, list[int]] = {}
+    for idx, bq in enumerate(bp_questions):
+        id_to_indices.setdefault(bq.question_id, []).append(idx)
+
+    duplicate_loser_indices: set[int] = set()
+    for qid, indices in id_to_indices.items():
+        if len(indices) <= 1:
+            continue
+        block = direct_matches.get(qid) or qid_to_block.get(qid)
+        if block is None:
+            duplicate_loser_indices.update(indices[1:])
+            continue
+        block_tokens = _tokenize(block.raw_text)
+        winner_idx = max(indices, key=lambda i: len(_tokenize(bp_questions[i].question_text) & block_tokens))
+        duplicate_loser_indices.update(i for i in indices if i != winner_idx)
 
     mapped_qas: list[MappedQA] = []
 
@@ -514,7 +766,9 @@ def map_answers_to_blueprint(
             anchor_text: str | None = None
             anchor_confidence: float = 0.0
 
-            block = direct_matches.get(bq.question_id) or qid_to_block.get(bq.question_id)
+            block = None if seq_idx in duplicate_loser_indices else (
+                direct_matches.get(bq.question_id) or qid_to_block.get(bq.question_id)
+            )
 
             if block is not None:
                 anchor_text = block.anchor.raw_label
