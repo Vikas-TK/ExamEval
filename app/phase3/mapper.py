@@ -451,6 +451,62 @@ def map_answers_to_blueprint(
                     used_pass3_ids.add(id(block))
                     break
 
+    # Pass 4 (safety net, strictly additive): anything still unclaimed after
+    # passes 1-3 would otherwise be silently dropped from every
+    # student_answer. Rather than lose it, append it to the mapped question
+    # whose own source block sits closest before it in the document. This
+    # never reassigns or overwrites any pass 1-3 decision — mapping_status,
+    # anchor_text, and anchor_confidence for every question are untouched;
+    # it only ever extends a student_answer that already exists, so it
+    # cannot change any result that was already correct.
+    #
+    # Unlike passes 2-3, this pool also includes LABELED blocks whose label
+    # doesn't match any real blueprint question — e.g. an in-prose worked
+    # example ("(i) Ms. Dhoni", "(ii) New Delhi") inside a long essay gets
+    # detected as sub-question anchors "(i)"/"(ii)", but no blueprint
+    # question is actually numbered "i"/"ii". Passes 2-3 must never touch a
+    # labeled block (that's what stops a real "2"-labeled answer from being
+    # stolen by a different question), but that protection is meaningless
+    # here — there is no real question "i"/"ii" for this content to be
+    # stolen from, so leaving it excluded only means it vanishes for good.
+    all_claimed_ids = used_block_ids | {id(b) for b in qid_to_block.values()}
+    bp_normalized_numbers = {_normalize_qno(bq.question_number) for bq in bp_questions}
+    pass4_pool = [
+        b for b in blocks
+        if id(b) not in all_claimed_ids
+        and _looks_like_answer(b.raw_text)
+        and (not b.anchor.normalized or _normalize_qno(b.anchor.normalized) not in bp_normalized_numbers)
+    ]
+    truly_orphaned = pass4_pool
+
+    appended_text: dict[str, list[str]] = {}
+    if truly_orphaned:
+        mapped_sources: dict[str, AnswerBlock] = {**direct_matches, **qid_to_block}
+
+        def _position(blk: AnswerBlock) -> tuple[int, int]:
+            pages = blk.page_numbers or []
+            return (min(pages) if pages else 0, blk.anchor.char_offset)
+
+        ordered_sources = sorted(mapped_sources.items(), key=lambda kv: _position(kv[1]))
+
+        for orphan in truly_orphaned:
+            orphan_pos = _position(orphan)
+            nearest_qid: str | None = None
+            for qid, src in ordered_sources:
+                if _position(src) <= orphan_pos:
+                    nearest_qid = qid
+                else:
+                    break
+            if nearest_qid is not None:
+                appended_text.setdefault(nearest_qid, []).append(orphan.raw_text)
+
+        if appended_text:
+            logger.info(
+                "Safety-net pass: reattached %d orphaned fragment(s) to their "
+                "nearest preceding mapped question instead of dropping them.",
+                sum(len(v) for v in appended_text.values()),
+            )
+
     mapped_qas: list[MappedQA] = []
 
     for seq_idx, bq in enumerate(bp_questions):
@@ -464,6 +520,9 @@ def map_answers_to_blueprint(
                 anchor_text = block.anchor.raw_label
                 anchor_confidence = block.anchor.confidence
                 student_answer = block.raw_text or None
+                if bq.question_id in appended_text:
+                    extra = "\n\n".join(appended_text[bq.question_id])
+                    student_answer = f"{student_answer}\n\n{extra}" if student_answer else extra
                 visual_elements = block.visual_elements
                 mapping_status = "MAPPED"
             else:

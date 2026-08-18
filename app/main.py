@@ -123,6 +123,19 @@ async def lifespan(app: FastAPI):
         logger.info("Database tables verified/created.")
     except Exception as exc:
         logger.warning(f"Table auto-create warning: {exc}")
+
+    try:
+        from app.db.session import SessionLocal
+        from app.blueprint_templates import ensure_internal_normal_template
+        session = SessionLocal()
+        try:
+            ensure_internal_normal_template(session)
+            logger.info("INTERNAL_NORMAL blueprint template verified/seeded.")
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning(f"INTERNAL_NORMAL template seeding warning: {exc}")
+
     yield
     logger.info(f"Shutting down {settings.app_name}...")
 
