@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.blueprint_models import ExamBlueprint
 from app.models.evaluation import EvaluationRecord, StudentIdentity
-from app.phase3.anchor_detector import detect_anchors
+from app.phase3.anchor_detector import _normalize_label, detect_anchors
 from app.phase3.mapper import _extract_blueprint_questions, map_answers_to_blueprint
 from app.phase3.repository import QAMappingRepository
 from app.phase3.schemas import MappedQA, Phase3Response, ValidationReport
@@ -97,12 +97,21 @@ class Phase3Service:
         blueprint_json = self._get_blueprint_json(blueprint_id)
         student_id = self._get_student_id(evaluation_id)
 
+        # Real blueprint question numbers, normalized the same way anchors
+        # are — lets the guard recognize a genuine out-of-order question
+        # (e.g. 16 answered after 18 within one "answer any two" Part)
+        # instead of only ever accepting strictly-increasing numbers.
+        blueprint_question_numbers = {
+            _normalize_label(bq.question_number)
+            for bq in _extract_blueprint_questions(blueprint_json)
+        }
+
         # Step 2: Detect Anchors
-        flat_text, page_map, anchors = detect_anchors(ocr_json)
+        flat_text, page_map, anchors = detect_anchors(ocr_json, blueprint_question_numbers)
         logger.info("Anchors detected: %d", len(anchors))
 
         # Step 3: Segment Answer Blocks
-        blocks = segment_answers(flat_text, anchors, ocr_json, page_map)
+        blocks = segment_answers(flat_text, anchors, ocr_json, page_map, blueprint_question_numbers)
         logger.info("Answer blocks segmented: %d", len(blocks))
 
         # Step 4 & 5: Map to Blueprint
