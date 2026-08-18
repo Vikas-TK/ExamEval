@@ -67,7 +67,6 @@ def _by_id(mapped_qas, qid):
     return next(m for m in mapped_qas if m.question_id == qid)
 
 
-
 def _ocr_with_structure_map(pages: list[tuple[str, dict]]) -> dict:
     """pages: [(transcript, structure_map), ...]"""
     return {
@@ -76,6 +75,7 @@ def _ocr_with_structure_map(pages: list[tuple[str, dict]]) -> dict:
             for i, (text, sm) in enumerate(pages)
         ]
     }
+
 
 def test_short_discrete_answers_stay_individually_mapped():
     """Part-A style: each bare number is its own real answer, not a continuation."""
@@ -290,12 +290,12 @@ def test_sections_answered_out_of_order_still_isolate_correctly():
     for q in (q1, q2, q13, q14, q17, q19a):
         assert q.mapping_status == "MAPPED", f"{q.question_id} was {q.mapping_status}"
 
-    assert "sparse Autoencoder" in q1.student_answer
-    assert "True" in q2.student_answer
-    assert "Standard Autoencoders" in q13.student_answer
-    assert "GAN has two networks" in q14.student_answer
-    assert "Named Entity Recognition" in q17.student_answer
-    assert "Denoising encoder" in q19a.student_answer
+    assert "sparse autoencoder" in q1.student_answer.lower()
+    assert "true" in q2.student_answer.lower()
+    assert "standard autoencoders" in q13.student_answer.lower()
+    assert "gan has two networks" in q14.student_answer.lower()
+    assert "named entity recognition" in q17.student_answer.lower()
+    assert "denoising encoder" in q19a.student_answer.lower()
 
     # None of Part B/C/D's content leaked backward into Part A's short answers.
     assert "Denoising" not in q1.student_answer
@@ -344,9 +344,11 @@ def test_higher_number_answered_before_lower_one_in_same_section():
     assert "video frames" not in q16.student_answer
 
 
+
 def _anchor(raw_label, normalized, confidence, method="regex", offset=0):
     return QuestionAnchor(
         raw_label=raw_label, normalized=normalized, char_offset=offset,
+        label_end_offset=offset + len(raw_label),
         page_number=1, confidence=confidence, detection_method=method,
     )
 

@@ -110,7 +110,11 @@ def _normalize_label(raw: str) -> str:
     return f"Q{stripped}" if len(stripped) <= 3 and not stripped.startswith("Q") else stripped
 
 
-def _regex_detect(flat_text: str, page_map: list[tuple[int, int, int]]) -> list[QuestionAnchor]:
+def _regex_detect(
+    flat_text: str,
+    page_map: list[tuple[int, int, int]],
+    blueprint_question_numbers: set[str] | None = None,
+) -> list[QuestionAnchor]:
     """
     Run all anchor regex patterns over flat_text and return deduplicated,
     UNGUARDED anchors (sorted by position). Callers run the result through
@@ -155,7 +159,165 @@ def _regex_detect(flat_text: str, page_map: list[tuple[int, int, int]]) -> list[
             ))
 
     anchors.sort(key=lambda a: a.char_offset)
-    return anchors
+    return _apply_sequence_guard(anchors, blueprint_question_numbers)
+
+
+def _apply_sequence_guard(
+    anchors: list[QuestionAnchor],
+    blueprint_question_numbers: set[str] | None = None,
+) -> list[QuestionAnchor]:
+    """
+    Reject standalone-number and lettered-subpart anchors that are almost
+    certainly internal list/step markers inside a long essay answer rather
+    than real question boundaries — e.g. a Q13 essay's own "1. Take input...",
+    "2. Separate frames..." working-process list, misread as fresh Q1/Q2
+    anchors that collide with the real (much earlier) Part-A Q1/Q2.
+
+    Kept deliberately simple: exam question numbers only go up within a
+    section, so any bare numeric anchor that is NOT higher than the highest
+    one already accepted in the current section is almost always an internal
+    list marker, not a new question — except a sub-numbered continuation of
+    the number just accepted ("18.1", "18.2", "13a", "13b"), which is kept if
+    it sits close to its parent. Lettered/roman sub-parts ("(a)", "(ii)") are
+    only trusted close to the anchor they immediately follow for the same
+    reason. Explicit "Q13"/"Question 13" style anchors are numeric-shaped
+    too and go through the same check — deliberately, since an in-answer
+    reference like that is rare and treating it uniformly avoids needing to
+    track which regex pattern produced each anchor.
+
+    A student is free to answer optional/choice questions within one Part in
+    any order (a section offering "answer any two of 16/17/18" has no
+    "expected" order) — writing 18 before 16 would otherwise permanently
+    lock 16 out, since it never exceeds the running max. When the caller
+    supplies the real blueprint question numbers, a bare number that exactly
+    matches one of them — and hasn't already been claimed by an earlier
+    anchor in this document — is also accepted, on top of (never instead of)
+    the ordering rule above. This can't reopen the door for internal list
+    markers: a Q13 essay's own "1. Take input..." would need the real
+    blueprint Q1 to still be unclaimed, but Q1's real anchor is always
+    detected earlier in the document (Part A comes first), so it's already
+    claimed by the time Q13's essay is reached.
+    """
+    accepted: list[QuestionAnchor] = []
+    section_max_num = 0
+    last_accepted_offset = -10 ** 9
+    claimed: set[str] = set()
+
+    for anchor in anchors:
+        norm = (anchor.normalized or "").upper()
+        label = anchor.raw_label.strip()
+
+        if norm.startswith("PART") or norm.startswith("SECTION"):
+            accepted.append(anchor)
+            section_max_num = 0
+            last_accepted_offset = anchor.char_offset
+            continue
+
+        numeric_match = _NUMERIC_LABEL_RE.match(label)
+        if numeric_match:
+            num = int(numeric_match.group(1))
+            has_subpart = bool(numeric_match.group(2)) or bool(numeric_match.group(3))
+            # A parenthesized "OR"-choice letter ("19(a)", "19(b)") is a
+            # top-level anchor in its own right, not a continuation of an
+            # already-open number — it's accepted like a fresh top-level
+            # number (group 4 set, num == section_max_num covers the second
+            # alternative appearing after the first was already accepted).
+            is_choice_form = bool(numeric_match.group(4))
+            close_enough = (anchor.char_offset - last_accepted_offset) <= _SUBPART_PROXIMITY_CHARS
+            is_unclaimed_blueprint_number = (
+                blueprint_question_numbers is not None
+                and norm in blueprint_question_numbers
+                and norm not in claimed
+            )
+            if has_subpart and num == section_max_num and close_enough:
+                accepted.append(anchor)
+                last_accepted_offset = anchor.char_offset
+            elif not has_subpart and (
+                section_max_num == 0
+                or num > section_max_num
+                or (is_choice_form and num == section_max_num)
+                or is_unclaimed_blueprint_number
+            ):
+                accepted.append(anchor)
+                section_max_num = max(section_max_num, num)
+                last_accepted_offset = anchor.char_offset
+                claimed.add(norm)
+            # else: internal list/step marker inside the current answer — drop it
+            continue
+
+        if _ROMAN_OR_LETTER_RE.match(label):
+            if (anchor.char_offset - last_accepted_offset) <= _SUBPART_PROXIMITY_CHARS:
+                accepted.append(anchor)
+                last_accepted_offset = anchor.char_offset
+            # else: bullet/list marker far from any real anchor — drop it
+            continue
+
+        # Anything else (shouldn't normally occur) — keep as-is.
+        accepted.append(anchor)
+
+    return accepted
+
+
+def looks_like_new_question(
+    text: str,
+    current_max_num: int,
+    blueprint_question_numbers: set[str] | None = None,
+) -> tuple[bool, int]:
+    """
+    Best-effort check for whether `text` (a paragraph's own opening line)
+    looks like a genuine new question boundary rather than a continuation of
+    the answer it was found inside — reusing the same anchor patterns and
+    monotonic-sequence philosophy as detect_anchors()/_apply_sequence_guard().
+
+    Used by the segmenter to decide whether a paragraph break inside an
+    already-anchored answer block is a real missed question (rare) or just a
+    section heading / numbered step within one long multi-page answer (the
+    common case for high-mark descriptive questions).
+
+    Returns (is_new_question, updated_max_num) — updated_max_num is
+    unchanged from current_max_num when is_new_question is False, so callers
+    can thread it through consecutive paragraphs in one pass.
+    """
+    probe = "\n" + text.lstrip("\n")
+    for pattern, _ in _ANCHOR_PATTERNS[:5]:  # numeric/Q-prefixed/paren-numeric/choice-form/sub-part only — not Part/Section
+        m = pattern.match(probe)
+        if not m:
+            continue
+        target = m.group(1) if m.groups() and m.group(1) else m.group()
+        label = target.strip()
+        if _is_noise(probe[: len(m.group()) + 30]):
+            continue
+
+        numeric_match = _NUMERIC_LABEL_RE.match(label)
+        if numeric_match:
+            num = int(numeric_match.group(1))
+            has_subpart = bool(numeric_match.group(2)) or bool(numeric_match.group(3))
+            is_choice_form = bool(numeric_match.group(4))
+            if has_subpart:
+                return False, current_max_num
+            # Same rescue as _apply_sequence_guard: a real, out-of-order
+            # blueprint question number (e.g. 16 appearing after 18 within
+            # one "answer any two" Part) is still recognized as a genuine
+            # new question even though it doesn't exceed current_max_num.
+            is_unclaimed_blueprint_number = (
+                blueprint_question_numbers is not None
+                and _normalize_label(label) in blueprint_question_numbers
+            )
+            if (
+                current_max_num == 0
+                or num > current_max_num
+                or (is_choice_form and num == current_max_num)
+                or is_unclaimed_blueprint_number
+            ):
+                return True, max(current_max_num, num)
+            return False, current_max_num
+
+        if _ROMAN_OR_LETTER_RE.match(label):
+            # No cheap proximity signal once already inside one long
+            # block's paragraph stream — treat as a continuation.
+            return False, current_max_num
+
+    return False, current_max_num
 
 
 def _apply_sequence_guard(
@@ -555,7 +717,7 @@ def detect_anchors(
 
     flat_text = "\n".join(segments)
 
-    anchors = _regex_detect(flat_text, page_map)
+    anchors = _regex_detect(flat_text, page_map, blueprint_question_numbers)
 
     # This average is deliberately computed on regex-only anchors, BEFORE
     # structure_map recovery below — it decides whether the (slow, real LLM

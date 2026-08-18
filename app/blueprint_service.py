@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.blueprint_engine import attach_answer_key, extract_sections, validate_blueprint
 from app.blueprint_models import ExamBlueprint
 from app.blueprint_schemas import ExamMetadata
+from app.blueprint_templates import apply_internal_normal_marks
 from app.storage import upload_blueprint, upload_faculty_answer_key
 
 
@@ -21,6 +22,8 @@ def create_blueprint(
     answer_key_filename: str | None = None,
 ) -> ExamBlueprint:
     sections = extract_sections(ocr)
+    if (metadata.exam_type or "").strip().upper() == "INTERNAL_NORMAL":
+        sections = apply_internal_normal_marks(sections)
     if answer_key:
         sections = attach_answer_key(sections, answer_key)
     validate_blueprint(metadata, sections)

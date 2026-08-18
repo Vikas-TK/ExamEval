@@ -4,45 +4,179 @@ import toast from 'react-hot-toast';
 import { BookOpen, CheckCircle2, Code, Download, FileText, Layers, Plus, Sparkles, UploadCloud } from 'lucide-react';
 import { Card, FileUploader, PageHeader } from '../components/ui';
 
+// Fixed structure for the college's internal-assessment question papers (50 marks total).
+const INTERNAL_NORMAL_TEMPLATE = {
+  exam_type: 'INTERNAL_NORMAL',
+  total_marks: 50,
+  parts: [
+    { part_name: 'Part A', choice_type: 'ALL_COMPULSORY', total_questions: 12, questions_to_answer: 12, marks_per_question: 0.5, has_subparts: false, has_internal_or_choice: false },
+    { part_name: 'Part B', choice_type: 'ALL_COMPULSORY', total_questions: 3, questions_to_answer: 3, marks_per_question: 2.0, has_subparts: false, has_internal_or_choice: false },
+    { part_name: 'Part C', choice_type: 'SELECT_ANY_N', total_questions: 3, questions_to_answer: 2, marks_per_question: 14.0, has_subparts: true, has_internal_or_choice: true },
+    { part_name: 'Part D', choice_type: 'SELECT_ANY_N', total_questions: 2, questions_to_answer: 1, marks_per_question: 10.0, has_subparts: true, has_internal_or_choice: true },
+  ],
+};
+
+const makeSubparts = (marks) => ([
+  { label: 'a', marks: marks / 2, question_text: '', answer_key: '' },
+  { label: 'b', marks: marks / 2, question_text: '', answer_key: '' },
+]);
+
+const makeManualQuestion = (questionNumber, marks, hasSubparts) => ({
+  question_number: questionNumber,
+  marks,
+  course_outcome: 'CO1',
+  blooms_taxonomy: 'Remember',
+  difficulty_level: 'Easy',
+  question_type: 'Short Answer',
+  expected_depth: 'Brief definition',
+  keywords: '',
+  answer_key: '',
+  ...(hasSubparts ? { subparts: makeSubparts(marks) } : {}),
+});
+
+const buildSectionFromPart = (part, partIdx) => ({
+  section_name: part.part_name,
+  choice_type: part.choice_type,
+  total_questions: part.total_questions,
+  questions_to_answer: part.questions_to_answer,
+  marks_per_question: part.marks_per_question,
+  has_subparts: part.has_subparts,
+  has_internal_or_choice: part.has_internal_or_choice,
+  total_marks: part.questions_to_answer * part.marks_per_question,
+  instructions: part.choice_type === 'SELECT_ANY_N'
+    ? `Answer any ${part.questions_to_answer} of ${part.total_questions} questions.`
+    : 'Answer all questions.',
+  questions: Array.from({ length: part.total_questions }, (_, i) =>
+    makeManualQuestion(`Q${partIdx * 100 + i + 1}`, part.marks_per_question, part.has_subparts)
+  ),
+});
+
 const SAMPLE_BLUEPRINT_JSON = JSON.stringify(
   {
-    exam_name: "End Semester Examination",
+    exam_name: "Internal Assessment I",
     subject: "Cloud Computing & Distributed Systems",
     subject_code: "IT8401",
     regulation: "R2021",
     semester: "SEM-06",
     department: "Computer Science and Engineering",
-    duration_minutes: 180,
-    maximum_marks: 100.0,
+    duration_minutes: 90,
+    maximum_marks: 50.0,
+    exam_type: "INTERNAL_NORMAL",
     status: "Approved",
     blueprint_type: "json_upload",
     sections: [
       {
-        section_name: "Part A (10 x 2 = 20 Marks)",
-        total_marks: 20.0,
+        section_name: "Part A",
+        choice_type: "ALL_COMPULSORY",
+        total_questions: 12,
+        questions_to_answer: 12,
+        marks_per_question: 0.5,
+        has_subparts: false,
+        has_internal_or_choice: false,
+        total_marks: 6.0,
         instructions: "Answer all questions.",
         questions: [
           {
             question_number: "Q1",
-            marks: 2.0,
+            marks: 0.5,
             course_outcome: "CO1",
             blooms_taxonomy: "Remember",
             difficulty_level: "Easy",
-            question_type: "Short Answer",
-            expected_depth: "Brief definition with 2 key points",
-            keywords: ["Cloud Computing", "Virtualization"],
-            answer_key: "Cloud computing provides on-demand availability of computer system resources without direct active management."
+            question_type: "MCQ",
+            expected_depth: "One-line answer",
+            keywords: ["Cloud Computing"],
+            answer_key: "Cloud computing provides on-demand availability of computer system resources."
           },
           {
             question_number: "Q2",
-            marks: 2.0,
+            marks: 0.5,
             course_outcome: "CO1",
+            blooms_taxonomy: "Remember",
+            difficulty_level: "Easy",
+            question_type: "MCQ",
+            expected_depth: "One-line answer",
+            keywords: ["Virtualization"],
+            answer_key: "Virtualization creates a virtual version of a resource such as a server or OS."
+          }
+        ]
+      },
+      {
+        section_name: "Part B",
+        choice_type: "ALL_COMPULSORY",
+        total_questions: 3,
+        questions_to_answer: 3,
+        marks_per_question: 2.0,
+        has_subparts: false,
+        has_internal_or_choice: false,
+        total_marks: 6.0,
+        instructions: "Answer all questions.",
+        questions: [
+          {
+            question_number: "Q13",
+            marks: 2.0,
+            course_outcome: "CO2",
             blooms_taxonomy: "Understand",
             difficulty_level: "Medium",
             question_type: "Short Answer",
-            expected_depth: "Comparison",
+            expected_depth: "Short explanation",
             keywords: ["IaaS", "PaaS", "SaaS"],
             answer_key: "IaaS offers infrastructure, PaaS provides platform/frameworks, and SaaS delivers complete software applications."
+          }
+        ]
+      },
+      {
+        section_name: "Part C",
+        choice_type: "SELECT_ANY_N",
+        total_questions: 3,
+        questions_to_answer: 2,
+        marks_per_question: 14.0,
+        has_subparts: true,
+        has_internal_or_choice: true,
+        total_marks: 28.0,
+        instructions: "Answer any 2 of 3 questions.",
+        questions: [
+          {
+            question_number: "Q16",
+            marks: 14.0,
+            course_outcome: "CO3",
+            blooms_taxonomy: "Apply",
+            difficulty_level: "Hard",
+            question_type: "Theory",
+            expected_depth: "Detailed explanation with diagrams",
+            keywords: ["Distributed Systems"],
+            answer_key: "",
+            subparts: [
+              { label: "a", marks: 8.0, question_text: "Explain the architecture in detail.", answer_key: "" },
+              { label: "b", marks: 6.0, question_text: "Discuss its advantages and limitations.", answer_key: "" }
+            ]
+          }
+        ]
+      },
+      {
+        section_name: "Part D",
+        choice_type: "SELECT_ANY_N",
+        total_questions: 2,
+        questions_to_answer: 1,
+        marks_per_question: 10.0,
+        has_subparts: true,
+        has_internal_or_choice: true,
+        total_marks: 10.0,
+        instructions: "Answer any 1 of 2 questions.",
+        questions: [
+          {
+            question_number: "Q19",
+            marks: 10.0,
+            course_outcome: "CO4",
+            blooms_taxonomy: "Analyze",
+            difficulty_level: "Hard",
+            question_type: "Theory",
+            expected_depth: "Case-study level analysis",
+            keywords: ["Case Study"],
+            answer_key: "",
+            subparts: [
+              { label: "a", marks: 5.0, question_text: "Analyze the given case study scenario.", answer_key: "" },
+              { label: "b", marks: 5.0, question_text: "Propose an improved design.", answer_key: "" }
+            ]
           }
         ]
       }
@@ -60,37 +194,21 @@ export default function QuestionPaperPage({ apiKey }) {
   const [jsonText, setJsonText] = useState('');
   
   const [metadata, setMetadata] = useState({
-    exam_name: 'End Semester Examination',
+    exam_name: 'Internal Assessment I',
     subject: 'Cloud Computing & Distributed Systems',
     subject_code: 'IT8401',
     regulation: 'R2021',
     semester: 'SEM-06',
     department: 'Computer Science',
-    duration_minutes: 180,
-    maximum_marks: 100,
+    duration_minutes: 90,
+    maximum_marks: INTERNAL_NORMAL_TEMPLATE.total_marks,
+    exam_type: INTERNAL_NORMAL_TEMPLATE.exam_type,
   });
 
-  // Manual Builder State
-  const [manualSections, setManualSections] = useState([
-    {
-      section_name: 'Part A',
-      total_marks: 20,
-      instructions: 'Answer all questions.',
-      questions: [
-        {
-          question_number: 'Q1',
-          marks: 2,
-          course_outcome: 'CO1',
-          blooms_taxonomy: 'Remember',
-          difficulty_level: 'Easy',
-          question_type: 'Short Answer',
-          expected_depth: 'Brief definition',
-          keywords: 'Cloud, Elasticity',
-          answer_key: 'Cloud computing delivers on-demand computing services over the internet.'
-        }
-      ]
-    }
-  ]);
+  // Manual Builder State - defaults to the fixed INTERNAL_NORMAL Part A-D template
+  const [manualSections, setManualSections] = useState(
+    INTERNAL_NORMAL_TEMPLATE.parts.map(buildSectionFromPart)
+  );
 
   const [loading, setLoading] = useState(false);
   const [blueprintData, setBlueprintData] = useState(null);
@@ -204,43 +322,42 @@ export default function QuestionPaperPage({ apiKey }) {
   };
 
   const addManualSection = () => {
+    const marksPerQuestion = 5;
     setManualSections([
       ...manualSections,
       {
         section_name: `Part ${String.fromCharCode(65 + manualSections.length)}`,
-        total_marks: 50,
+        choice_type: 'ALL_COMPULSORY',
+        total_questions: 1,
+        questions_to_answer: 1,
+        marks_per_question: marksPerQuestion,
+        has_subparts: false,
+        has_internal_or_choice: false,
+        total_marks: marksPerQuestion,
         instructions: 'Answer required questions.',
-        questions: [
-          {
-            question_number: `Q${manualSections.length * 10 + 1}`,
-            marks: 10,
-            course_outcome: 'CO2',
-            blooms_taxonomy: 'Apply',
-            difficulty_level: 'Medium',
-            question_type: 'Theory',
-            expected_depth: 'Detailed explanation',
-            keywords: 'Architecture, Design',
-            answer_key: 'Detailed model answer.'
-          }
-        ]
+        questions: [makeManualQuestion(`Q${manualSections.length * 10 + 1}`, marksPerQuestion, false)]
       }
     ]);
   };
 
   const addManualQuestion = (secIdx) => {
     const updated = [...manualSections];
-    const qCount = updated[secIdx].questions.length + 1;
-    updated[secIdx].questions.push({
-      question_number: `Q${qCount}`,
-      marks: 2,
-      course_outcome: 'CO1',
-      blooms_taxonomy: 'Remember',
-      difficulty_level: 'Easy',
-      question_type: 'Short Answer',
-      expected_depth: 'Brief definition',
-      keywords: '',
-      answer_key: ''
-    });
+    const section = updated[secIdx];
+    const qCount = section.questions.length + 1;
+    const marks = section.marks_per_question ?? 2;
+    section.questions.push(makeManualQuestion(`Q${qCount}`, marks, !!section.has_subparts));
+    setManualSections(updated);
+  };
+
+  const updateSectionField = (secIdx, field, value) => {
+    const updated = [...manualSections];
+    updated[secIdx] = { ...updated[secIdx], [field]: value };
+    setManualSections(updated);
+  };
+
+  const updateSubpart = (secIdx, qIdx, spIdx, field, value) => {
+    const updated = [...manualSections];
+    updated[secIdx].questions[qIdx].subparts[spIdx][field] = value;
     setManualSections(updated);
   };
 
@@ -485,17 +602,67 @@ export default function QuestionPaperPage({ apiKey }) {
                     />
                   </label>
                   <label className="field">
-                    <span>Total Marks</span>
+                    <span>Marks per Question</span>
                     <input
                       type="number"
-                      value={sec.total_marks}
+                      step="0.5"
+                      value={sec.marks_per_question ?? ''}
                       onChange={(e) => {
+                        const marksPerQuestion = parseFloat(e.target.value);
                         const updated = [...manualSections];
-                        updated[secIdx].total_marks = parseFloat(e.target.value);
+                        const target = updated[secIdx];
+                        target.marks_per_question = marksPerQuestion;
+                        target.total_marks = (target.questions_to_answer ?? target.questions.length) * marksPerQuestion;
                         setManualSections(updated);
                       }}
-                      required
                     />
+                  </label>
+                  <label className="field">
+                    <span>Choice Type</span>
+                    <select
+                      value={sec.choice_type || 'ALL_COMPULSORY'}
+                      onChange={(e) => updateSectionField(secIdx, 'choice_type', e.target.value)}
+                    >
+                      <option value="ALL_COMPULSORY">All Compulsory</option>
+                      <option value="SELECT_ANY_N">Select Any N</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Total Questions</span>
+                    <input
+                      type="number"
+                      value={sec.total_questions ?? sec.questions.length}
+                      onChange={(e) => updateSectionField(secIdx, 'total_questions', parseInt(e.target.value, 10))}
+                    />
+                  </label>
+                  {sec.choice_type === 'SELECT_ANY_N' && (
+                    <label className="field">
+                      <span>Questions to Answer</span>
+                      <input
+                        type="number"
+                        value={sec.questions_to_answer ?? ''}
+                        onChange={(e) => {
+                          const questionsToAnswer = parseInt(e.target.value, 10);
+                          const updated = [...manualSections];
+                          const target = updated[secIdx];
+                          target.questions_to_answer = questionsToAnswer;
+                          target.total_marks = questionsToAnswer * (target.marks_per_question ?? 0);
+                          setManualSections(updated);
+                        }}
+                      />
+                    </label>
+                  )}
+                  <label className="field">
+                    <span>Total Marks (auto)</span>
+                    <input type="number" value={sec.total_marks} readOnly />
+                  </label>
+                  <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!sec.has_subparts}
+                      onChange={(e) => updateSectionField(secIdx, 'has_subparts', e.target.checked)}
+                    />
+                    <span>Has Sub-parts (a/b)</span>
                   </label>
                 </div>
 
@@ -580,6 +747,46 @@ export default function QuestionPaperPage({ apiKey }) {
                           placeholder="Enter model answer expected for evaluation..."
                         />
                       </label>
+
+                      {sec.has_subparts && Array.isArray(q.subparts) && (
+                        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px dashed #cbd5e1' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Sub-parts</span>
+                            {Math.abs(q.subparts.reduce((sum, sp) => sum + (parseFloat(sp.marks) || 0), 0) - q.marks) > 0.01 && (
+                              <span style={{ color: '#dc2626', fontSize: '0.75rem' }}>
+                                Sub-part marks must sum to {q.marks}
+                              </span>
+                            )}
+                          </div>
+                          {q.subparts.map((sp, spIdx) => (
+                            <div key={spIdx} className="form-grid" style={{ marginBottom: '0.5rem' }}>
+                              <label className="field">
+                                <span>Label</span>
+                                <input
+                                  value={sp.label}
+                                  onChange={(e) => updateSubpart(secIdx, qIdx, spIdx, 'label', e.target.value)}
+                                />
+                              </label>
+                              <label className="field">
+                                <span>Marks</span>
+                                <input
+                                  type="number"
+                                  step="0.5"
+                                  value={sp.marks}
+                                  onChange={(e) => updateSubpart(secIdx, qIdx, spIdx, 'marks', parseFloat(e.target.value))}
+                                />
+                              </label>
+                              <label className="field full-field">
+                                <span>Sub-part Question Text</span>
+                                <input
+                                  value={sp.question_text}
+                                  onChange={(e) => updateSubpart(secIdx, qIdx, spIdx, 'question_text', e.target.value)}
+                                />
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

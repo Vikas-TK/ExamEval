@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 # --- Question & Section Pydantic Models ---
 
+class SubpartDetail(BaseModel):
+    label: str
+    marks: float
+    question_text: Optional[str] = None
+    answer_key: Optional[str] = None
+
+
 class QuestionDetail(BaseModel):
     question_number: str
     is_sub_question: bool = False
@@ -37,6 +44,7 @@ class QuestionDetail(BaseModel):
     evaluation_criteria: List[str] = Field(default_factory=list)
     is_optional: bool = False
     answer_key: Optional[str] = None
+    subparts: List[SubpartDetail] = Field(default_factory=list)
 
 
 class SectionDetail(BaseModel):
@@ -46,6 +54,12 @@ class SectionDetail(BaseModel):
     total_marks: float
     instructions: Optional[str] = None
     questions: List[QuestionDetail]
+    choice_type: str = "ALL_COMPULSORY"  # ALL_COMPULSORY | SELECT_ANY_N
+    total_questions: Optional[int] = None
+    questions_to_answer: Optional[int] = None
+    marks_per_question: Optional[float] = None
+    has_subparts: bool = False
+    has_internal_or_choice: bool = False
 
 
 class ComprehensiveBlueprintSchema(BaseModel):
@@ -118,14 +132,41 @@ def validate_blueprint_json(data: Dict[str, Any]) -> BlueprintJSONValidationResu
 
             if q.marks <= 0:
                 errors.append(f"Question '{qno}' in Section '{sec.section_name}' has invalid marks ({q.marks}).")
-            
+
+            if q.subparts:
+                subpart_sum = sum(sp.marks for sp in q.subparts)
+                if abs(subpart_sum - q.marks) > 0.01:
+                    errors.append(
+                        f"Question '{qno}' in Section '{sec.section_name}' has subpart marks ({subpart_sum}) "
+                        f"that don't sum to the question's marks ({q.marks})."
+                    )
+
             sec_marks += q.marks
             calculated_marks += q.marks
 
             if not q.answer_key:
                 warnings.append(f"Question '{qno}' has no embedded answer key defined.")
 
-        if abs(sec_marks - sec.total_marks) > 0.01 and sec.total_marks > 0:
+        if sec.questions_to_answer is not None and sec.total_questions is not None:
+            if sec.questions_to_answer > sec.total_questions:
+                errors.append(
+                    f"Section '{sec.section_name}' requires answering {sec.questions_to_answer} questions "
+                    f"but only declares {sec.total_questions} total questions."
+                )
+            if len(sec.questions) != sec.total_questions:
+                warnings.append(
+                    f"Section '{sec.section_name}' declares total_questions={sec.total_questions} but "
+                    f"{len(sec.questions)} question(s) were provided."
+                )
+
+        if sec.choice_type == "SELECT_ANY_N" and sec.questions_to_answer is not None and sec.marks_per_question is not None:
+            expected_marks = sec.questions_to_answer * sec.marks_per_question
+            if abs(expected_marks - sec.total_marks) > 0.01 and sec.total_marks > 0:
+                warnings.append(
+                    f"Section '{sec.section_name}' declared total marks ({sec.total_marks}) differs from "
+                    f"questions_to_answer x marks_per_question ({expected_marks})."
+                )
+        elif abs(sec_marks - sec.total_marks) > 0.01 and sec.total_marks > 0:
             warnings.append(
                 f"Section '{sec.section_name}' declared total marks ({sec.total_marks}) differs from sum of question marks ({sec_marks})."
             )

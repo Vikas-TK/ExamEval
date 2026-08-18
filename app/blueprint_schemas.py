@@ -80,6 +80,7 @@ class ExamMetadata(BaseModel):
     department: str = Field(min_length=1, max_length=255)
     duration_minutes: int = Field(gt=0, le=1440)
     maximum_marks: float = Field(gt=0)
+    exam_type: str = "INTERNAL_NORMAL"
 
 
 class BlueprintCreateResponse(BaseModel):
