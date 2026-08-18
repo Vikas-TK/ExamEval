@@ -72,18 +72,31 @@ def _round_to_half(value: float) -> float:
     return round(value * 2) / 2
 
 
+def _is_objective_or_tf_question(question_text: str | None, question_type: str | None) -> bool:
+    q_type = (question_type or "").lower()
+    q_text = (question_text or "").lower()
+    if any(t in q_type for t in ["true/false", "true or false", "t/f", "mcq", "multiple choice", "objective", "binary"]):
+        return True
+    if any(phrase in q_text for phrase in ["true or false", "say true or false", "state true or false", "true/false", "t/f"]):
+        return True
+    return False
+
+
 def _build_system_prompt(persona: str) -> str:
     return (
         f"{persona}, evaluating a student's exam answer. "
-        "Be balanced, fair, and moderate in awarding marks. "
-        "Be somewhat lenient and reward genuine understanding even if phrasing differs from a "
-        "reference answer or uses equivalent terminology, but DO NOT award overly high or maximum marks "
-        "unless the answer is fully comprehensive, detailed, and flawless. "
-        "Do not be excessively strict, but do not give top scores easily — always aim for a balanced, "
-        "realistic middle-ground score that reflects actual core understanding without inflating it. "
-        "Scores MUST be either a whole number or a whole number plus exactly .5 (half-mark "
-        "increments only) — e.g. 0, 0.5, 1, 3.5 are valid; 3.25, 3.7, 3.33 are NOT. Never use any "
-        "decimal other than .5. "
+        "Be balanced, fair, and moderate in awarding marks.\n"
+        "CRITICAL EVALUATION & CONSISTENCY RULES:\n"
+        "1. STRICT FEEDBACK-SCORE CONSISTENCY: Your assigned score MUST strictly align with your written feedback. "
+        "If your feedback states, explains, or implies that the student's answer is incorrect, wrong, or false, "
+        "the score MUST be 0 (0.0). NEVER award partial or non-zero marks when your feedback indicates the answer is wrong.\n"
+        "2. OBJECTIVE & TRUE/FALSE QUESTIONS: Objective, True/False, Multiple Choice, and binary factual questions "
+        "are strictly all-or-nothing. If the student selects or states an incorrect choice (e.g., stating 'True' when the statement is false), "
+        "the score MUST be 0.0. Absolutely NO partial marks are allowed for an incorrect objective answer.\n"
+        "3. DESCRIPTIVE QUESTIONS: Be fair and reward genuine understanding even if phrasing differs, "
+        "aiming for a realistic middle-ground score when core concepts are shown. But if the core statement is factually wrong, award 0 marks.\n"
+        "4. SCORE FORMAT: Scores MUST be either a whole number or a whole number plus exactly .5 (half-mark increments only) "
+        "— e.g. 0, 0.5, 1, 3.5 are valid; 3.25, 3.7 are NOT. Never use any decimal other than .5.\n"
         "Always return a valid JSON object and nothing else."
     )
 
@@ -97,9 +110,10 @@ def _build_prompt(
     has_visual: bool,
 ) -> str:
     max_marks_str = _fmt_marks(maximum_marks)
+    is_tf_obj = _is_objective_or_tf_question(question_text, question_type)
     parts = [
         f"Question: {question_text}",
-        f"Question Type: {question_type or 'Descriptive'}",
+        f"Question Type: {question_type or ('True/False Objective' if is_tf_obj else 'Descriptive')}",
         f"Maximum Marks: {max_marks_str}",
     ]
     if answer_key:
@@ -107,9 +121,17 @@ def _build_prompt(
     parts.append(f"Student's Answer: {student_answer or '[No answer written]'}")
     if has_visual:
         parts.append("Note: Student's answer included diagrams/visual elements (already noted in answer text).")
+    
+    if is_tf_obj:
+        parts.append(
+            "\nSPECIAL RULE FOR THIS QUESTION: This is a True/False or objective question. "
+            "Evaluation is strictly all-or-nothing. If the student's answer/choice is incorrect or false, "
+            "the score MUST be 0.0. Do NOT award any partial credit."
+        )
+
     parts.append(
         f'\nScore the student answer from 0 to {max_marks_str}, in whole numbers or half-mark (.5) '
-        f'increments only — no other decimals. Aim for a balanced, moderate middle-ground score reflecting actual depth.\n'
+        f'increments only — no other decimals.\n'
         f'Return ONLY this JSON:\n'
         f'{{"score": <number, whole or ending in .5>, "feedback": "<1-2 sentence explanation for faculty>", "confidence": <0.0-1.0>}}'
     )
@@ -127,7 +149,7 @@ def score_answer(
 ) -> ScoringResult:
     """
     Score a single student answer using the locally configured Qwen model.
-    Returns ScoringResult(score, feedback, confidence) with an integer score.
+    Returns ScoringResult(score, feedback, confidence) with an integer/half-mark score.
     Falls back to 0 marks with error message if LLM fails.
     """
     # Skip if no answer at all
@@ -175,13 +197,40 @@ def score_answer(
 
         data = json.loads(raw)
         score = _round_to_half(float(data.get("score", 0.0)))
-        # Clamp score to [0, maximum_marks] — maximum_marks itself may be a
-        # half-mark value (e.g. 0.5 per question in an MCQ section), so this
-        # must stay a float rather than truncating via int().
+        feedback = str(data.get("feedback", ""))
+
+        # ─── Post-processing Consistency Guardrail ───
+        # Ensure score strictly matches written feedback, especially for True/False and objective questions.
+        feedback_lower = feedback.lower()
+        is_tf_obj = _is_objective_or_tf_question(question_text, question_type)
+
+        negative_indicators = [
+            "not ", "incorrect", "false", "wrong", "is false", "is incorrect",
+            "should be false", "should be true", "is not used", "is wrong",
+            "does not", "cannot be", "erroneous", "statement is false"
+        ]
+
+        if is_tf_obj and score > 0.0:
+            if any(ind in feedback_lower for ind in negative_indicators):
+                logger.info(
+                    "Guardrail zeroed score for objective/True-False question with negative feedback: "
+                    "score was %s, feedback='%s'", score, feedback
+                )
+                score = 0.0
+        elif score > 0.0:
+            explicit_zero_phrases = ["is incorrect", "completely wrong", "factually wrong", "answer is false", "statement is false"]
+            if any(phrase in feedback_lower for phrase in explicit_zero_phrases) and ("correct" not in feedback_lower or "is incorrect" in feedback_lower):
+                logger.info(
+                    "Guardrail zeroed score due to feedback-score mismatch: "
+                    "score was %s, feedback='%s'", score, feedback
+                )
+                score = 0.0
+
+        # Clamp score to [0, maximum_marks]
         score = max(0.0, min(score, float(maximum_marks)))
         return ScoringResult(
             score=float(score),
-            feedback=str(data.get("feedback", "")),
+            feedback=feedback,
             confidence=float(data.get("confidence", 0.8)),
         )
 
