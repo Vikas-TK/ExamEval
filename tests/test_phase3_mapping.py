@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import uuid
 
+import app.phase3.mapper as mapper_module
 from app.phase3.anchor_detector import _normalize_label, detect_anchors
 from app.phase3.mapper import _extract_blueprint_questions, map_answers_to_blueprint
+from app.phase3.schemas import AnswerBlock, BlueprintQuestion, QuestionAnchor
 from app.phase3.segmenter import segment_answers
 
 
@@ -330,3 +332,219 @@ def test_higher_number_answered_before_lower_one_in_same_section():
     # Each stays isolated to its own answer — neither absorbed the other's.
     assert "update gate" not in q18.student_answer
     assert "video frames" not in q16.student_answer
+
+
+def _anchor(raw_label, normalized, confidence, method="regex", offset=0):
+    return QuestionAnchor(
+        raw_label=raw_label, normalized=normalized, char_offset=offset,
+        page_number=1, confidence=confidence, detection_method=method,
+    )
+
+
+def _block(text, raw_label="", normalized="", confidence=0.5, method="regex", offset=0):
+    return AnswerBlock(
+        anchor=_anchor(raw_label, normalized, confidence, method, offset),
+        raw_text=text, visual_elements=[], page_numbers=[1],
+    )
+
+
+def _bq(qid, qnum, text, section="Part A", order=1):
+    return BlueprintQuestion(
+        question_id=qid, question_number=qnum, question_text=text,
+        maximum_marks=1.0, question_type="Descriptive", section_name=section,
+        question_order=order,
+    )
+
+
+def test_llm_verification_pass_confirms_a_valid_grounded_correction(monkeypatch):
+    """
+    The one path where Pass 1.5 is SUPPOSED to change something: a block
+    weakly matched (low confidence) to q1, whose content actually shares
+    vocabulary with q2's question text, gets reassigned to q2 when the LLM
+    says so — proving the mechanism can fire, not just refuse.
+    """
+    b1 = _block("GRU has an update gate and reset gate", confidence=0.5)
+    bp = [
+        _bq("q1", "1", "Explain sparse autoencoders."),
+        _bq("q2", "2", "Explain the GRU update gate mechanism."),
+    ]
+    direct_matches = {"q1": b1}
+
+    monkeypatch.setattr(
+        mapper_module, "_call_local_llm_json",
+        lambda system, user, max_tokens=1024: {str(id(b1)): "q2"},
+    )
+    corrections = mapper_module._llm_verify_uncertain_matches(
+        [b1], bp, direct_matches, {"q1"},
+    )
+    assert corrections == {"q2": str(id(b1))}
+
+
+def test_llm_verification_rejects_invented_question_id(monkeypatch):
+    """A question_id the LLM returns that isn't in the blueprint at all must never be trusted."""
+    b1 = _block("GRU has an update gate and reset gate", confidence=0.5)
+    bp = [_bq("q1", "1", "Explain sparse autoencoders.")]
+    direct_matches = {"q1": b1}
+
+    monkeypatch.setattr(
+        mapper_module, "_call_local_llm_json",
+        lambda system, user, max_tokens=1024: {str(id(b1)): "totally-fabricated-qid"},
+    )
+    corrections = mapper_module._llm_verify_uncertain_matches(
+        [b1], bp, direct_matches, {"q1"},
+    )
+    assert corrections == {}
+
+
+def test_llm_verification_rejects_zero_keyword_overlap(monkeypatch):
+    """
+    A real question_id paired with a block that shares no vocabulary with
+    it is not grounded in the text and must be discarded, exactly like the
+    existing semantic-match grounding check.
+    """
+    b1 = _block("xyz miscellaneous unrelated filler with no shared vocabulary", confidence=0.5)
+    bp = [
+        _bq("q1", "1", "Explain sparse autoencoders."),
+        _bq("q2", "2", "Explain the GRU update gate mechanism."),
+    ]
+    direct_matches = {"q1": b1}
+
+    monkeypatch.setattr(
+        mapper_module, "_call_local_llm_json",
+        lambda system, user, max_tokens=1024: {str(id(b1)): "q2"},
+    )
+    corrections = mapper_module._llm_verify_uncertain_matches(
+        [b1], bp, direct_matches, {"q1"},
+    )
+    assert corrections == {}
+
+
+def test_llm_verification_rejects_block_outside_uncertain_pool(monkeypatch):
+    """
+    A block currently owned by a CONFIDENT (non-uncertain) match must never
+    be stolen, even if the LLM proposes it — only blocks already flagged
+    uncertain are eligible to move.
+    """
+    confident_block = _block("Sparse autoencoders restrict capacity.", confidence=0.95)
+    bp = [
+        _bq("q1", "1", "Explain sparse autoencoders."),
+        _bq("q2", "2", "Explain the GRU update gate mechanism."),
+    ]
+    direct_matches = {"q1": confident_block}  # q1 not in uncertain_question_ids
+
+    monkeypatch.setattr(
+        mapper_module, "_call_local_llm_json",
+        lambda system, user, max_tokens=1024: {str(id(confident_block)): "q2"},
+    )
+    corrections = mapper_module._llm_verify_uncertain_matches(
+        [confident_block], bp, direct_matches, {"q2"},
+    )
+    assert corrections == {}
+
+
+def test_llm_verification_failure_returns_empty_and_never_raises(monkeypatch):
+    """
+    Pass 1.5 must never crash or propagate an exception when the local LLM
+    is unavailable (e.g. Ollama not running) — callers must be able to
+    treat this identically to "nothing to correct."
+    """
+    b1 = _block("GRU has an update gate and reset gate", confidence=0.5)
+    bp = [_bq("q1", "1", "Explain sparse autoencoders.")]
+    direct_matches = {"q1": b1}
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("local LLM endpoint unreachable")
+
+    monkeypatch.setattr(mapper_module, "_call_local_llm_json", _raise)
+    corrections = mapper_module._llm_verify_uncertain_matches(
+        [b1], bp, direct_matches, {"q1"},
+    )
+    assert corrections == {}
+
+
+def test_map_answers_to_blueprint_swaps_ownership_without_double_claiming(monkeypatch):
+    """
+    End-to-end through map_answers_to_blueprint: when Pass 1.5 moves a block
+    from its originally (weakly) matched question to a different one, the
+    old question must be vacated, not left pointing at the same block that
+    now also belongs to the new question — otherwise the same answer text
+    would appear twice under two different question numbers.
+    """
+    ocr_json = _ocr([
+        "Part-A\n"
+        "1. GRU has an update gate and reset gate for sequence modeling\n"
+    ])
+    blueprint_json = _blueprint([
+        ("Part-A", [
+            ("q1", "1", 1.0, "Explain sparse autoencoders."),
+            ("q2", "2", 1.0, "Explain the GRU update gate mechanism."),
+        ]),
+    ])
+
+    monkeypatch.setattr(mapper_module.settings, "phase3_llm_verification_enabled", True)
+    # Force q1's match to read as low-confidence so it's treated as uncertain,
+    # regardless of what real confidence regex assigned it.
+    monkeypatch.setattr(
+        mapper_module.settings, "phase3_llm_verification_confidence_threshold", 0.99
+    )
+
+    captured_bid = {}
+
+    def _fake_llm(system, user, max_tokens=1024):
+        for line in user.splitlines():
+            if "-> currently: q1 |" in line:
+                bid = line.split(":", 1)[0].strip()
+                captured_bid["bid"] = bid
+                return {bid: "q2"}
+        return {}
+
+    monkeypatch.setattr(mapper_module, "_call_local_llm_json", _fake_llm)
+
+    mapped = _run(ocr_json, blueprint_json)
+    q1 = _by_id(mapped, "q1")
+    q2 = _by_id(mapped, "q2")
+
+    assert captured_bid, "test setup did not exercise the LLM correction path"
+    assert q2.mapping_status == "MAPPED"
+    assert "update gate" in q2.student_answer
+    # q1 must be vacated, not left duplicating q2's content.
+    assert q1.mapping_status == "SKIPPED"
+    assert q1.student_answer is None
+
+
+def test_ambiguous_choice_group_resolved_by_content_not_duplicated():
+    """
+    Real-world case from a scanned answer booklet: the row-number and the
+    chosen sub-letter of a "19(a) / 19(b)" choice question are written as
+    two separate tokens ("19)" then "b)" on its own line) rather than the
+    fused "19(b)" the regex expects — so the anchor is detected as a bare
+    "19", which shares its stripped digit with BOTH blueprint siblings.
+    Without Pass 1b's ambiguous-digit guard, the naive fuzzy-digit fallback
+    let both q19a and q19b independently claim the same block, duplicating
+    the one real answer onto the question the student never attempted.
+    """
+    ocr_json = _ocr([
+        "Part-D\n"
+        "19) b)\n\n"
+        "Transfer learning\n\n"
+        "Transfer learning is one of the deep learning model technique where "
+        "a pre-trained model is reused for a new task. VGG16 is a popular "
+        "CNN model used to predict the imagenet dataset.\n"
+    ])
+    blueprint_json = _blueprint([
+        ("Part-D", [
+            ("q19a", "19(a)", 10.0, "Explain the denoising autoencoder architecture."),
+            ("q19b", "19(b)", 10.0, "Explain transfer learning using VGG16 for image classification."),
+        ]),
+    ])
+
+    mapped = _run(ocr_json, blueprint_json)
+    q19a = _by_id(mapped, "q19a")
+    q19b = _by_id(mapped, "q19b")
+
+    assert q19b.mapping_status == "MAPPED"
+    assert "Transfer learning" in q19b.student_answer
+    # The unanswered sibling must stay unanswered, not inherit a duplicate
+    # of q19b's content just because they share the digit "19".
+    assert q19a.mapping_status == "SKIPPED"
+    assert q19a.student_answer is None

@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     got_ocr_model_name: str = "stepfun-ai/GOT-OCR2_0"
     got_ocr_device: str = "auto"
     qwen_num_ctx: int = 16384
+    phase3_llm_verification_enabled: bool = True
+    phase3_llm_verification_confidence_threshold: float = 0.90
 
     # --- Frontend Integration ---
     frontend_url: str = "http://localhost:3000"
