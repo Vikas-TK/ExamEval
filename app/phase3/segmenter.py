@@ -12,6 +12,7 @@ import logging
 import re
 from typing import Any
 
+from app.phase3.anchor_detector import looks_like_new_question
 from app.phase3.schemas import AnswerBlock, QuestionAnchor
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def segment_answers(
     anchors: list[QuestionAnchor],
     ocr_data: dict[str, Any],
     page_map: list[tuple[int, int, int]],
+    blueprint_question_numbers: set[str] | None = None,
 ) -> list[AnswerBlock]:
     """
     Slice flat_text at every anchor boundary to produce AnswerBlocks.
@@ -57,6 +59,10 @@ def segment_answers(
         anchors:   Sorted list of QuestionAnchor objects.
         ocr_data:  Full OCR JSON (for visual_elements lookup).
         page_map:  (char_start, char_end, page_number) tuples.
+        blueprint_question_numbers: normalized real blueprint question
+            numbers, passed through to looks_like_new_question so an
+            out-of-order question missed by detect_anchors can still be
+            recognized when re-checked at the paragraph level.
 
     Returns:
         List of AnswerBlock, one per anchor, with raw_text and visual_elements.
@@ -103,13 +109,16 @@ def segment_answers(
             page_numbers=sorted(set(page_numbers)),
         ))
 
-    blocks = _split_section_header_blocks(blocks)
+    blocks = _split_section_header_blocks(blocks, blueprint_question_numbers)
 
     logger.info("Segmented %d answer blocks from %d anchors.", len(blocks), len(anchors))
     return blocks
 
 
-def _split_section_header_blocks(blocks: list[AnswerBlock]) -> list[AnswerBlock]:
+def _split_section_header_blocks(
+    blocks: list[AnswerBlock],
+    blueprint_question_numbers: set[str] | None = None,
+) -> list[AnswerBlock]:
     """
     Split a block into one sub-block per paragraph whenever it looks like it
     swallowed more than one answer. Two distinct cases produce this:
@@ -123,9 +132,13 @@ def _split_section_header_blocks(blocks: list[AnswerBlock]) -> list[AnswerBlock]
     2. A real question-numbered anchor (e.g. "5.") whose next 1-2 questions
        lost their number to OCR/handwriting noise — the answer for Q5 keeps
        absorbing Q6's and Q7's text until the next anchor it CAN detect
-       (e.g. "8."). Here the first paragraph genuinely is that question's
-       answer and keeps its label; only the extra trailing paragraphs are
-       unlabeled leftovers for content matching.
+       (e.g. "8."). Here only paragraphs that themselves look like a genuine
+       new question boundary (see looks_like_new_question) get split off as
+       unlabeled leftovers; everything else — section headings, numbered
+       working-steps, closing paragraphs — stays part of THIS answer. A long
+       multi-page descriptive answer routinely has several blank-line
+       paragraphs of its own and must not be shredded down to just the
+       first one.
     """
     expanded: list[AnswerBlock] = []
     for block in blocks:
@@ -137,29 +150,50 @@ def _split_section_header_blocks(blocks: list[AnswerBlock]) -> list[AnswerBlock]
             expanded.append(block)
             continue
 
-        start_idx = 0
-        if not is_section_header:
-            # Keep the first paragraph attached to the real anchor it was
-            # detected under — only the swallowed extras get unlabeled.
-            expanded.append(AnswerBlock(
-                anchor=block.anchor,
-                raw_text=paragraphs[0],
-                visual_elements=block.visual_elements,
-                page_numbers=block.page_numbers,
-            ))
-            start_idx = 1
+        if is_section_header:
+            for para in paragraphs:
+                expanded.append(AnswerBlock(
+                    anchor=QuestionAnchor(
+                        raw_label="",
+                        normalized="",
+                        char_offset=block.anchor.char_offset,
+                        page_number=block.anchor.page_number,
+                        confidence=0.5,
+                        detection_method="section_split",
+                    ),
+                    raw_text=para,
+                    visual_elements=block.visual_elements,
+                    page_numbers=block.page_numbers,
+                ))
+            continue
 
-        for para in paragraphs[start_idx:]:
+        # Real numbered anchor: group paragraphs, starting a new (unlabeled)
+        # group only when a paragraph genuinely looks like the next question.
+        digits = re.sub(r"^Q", "", norm)
+        current_max_num = int(digits) if digits.isdigit() else 0
+
+        groups: list[tuple[QuestionAnchor, list[str]]] = [(block.anchor, [paragraphs[0]])]
+        for para in paragraphs[1:]:
+            is_new, current_max_num = looks_like_new_question(para, current_max_num, blueprint_question_numbers)
+            if is_new:
+                groups.append((
+                    QuestionAnchor(
+                        raw_label="",
+                        normalized="",
+                        char_offset=block.anchor.char_offset,
+                        page_number=block.anchor.page_number,
+                        confidence=0.5,
+                        detection_method="section_split",
+                    ),
+                    [para],
+                ))
+            else:
+                groups[-1][1].append(para)
+
+        for anchor, parts in groups:
             expanded.append(AnswerBlock(
-                anchor=QuestionAnchor(
-                    raw_label="",
-                    normalized="",
-                    char_offset=block.anchor.char_offset,
-                    page_number=block.anchor.page_number,
-                    confidence=0.5,
-                    detection_method="section_split",
-                ),
-                raw_text=para,
+                anchor=anchor,
+                raw_text="\n\n".join(parts),
                 visual_elements=block.visual_elements,
                 page_numbers=block.page_numbers,
             ))
