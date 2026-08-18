@@ -75,9 +75,17 @@ def _round_to_half(value: float) -> float:
 def _is_objective_or_tf_question(question_text: str | None, question_type: str | None) -> bool:
     q_type = (question_type or "").lower()
     q_text = (question_text or "").lower()
-    if any(t in q_type for t in ["true/false", "true or false", "t/f", "mcq", "multiple choice", "objective", "binary"]):
+    if any(t in q_type for t in [
+        "true/false", "true or false", "t/f", "mcq", "multiple choice",
+        "objective", "binary", "yes/no", "boolean", "fill in", "single word"
+    ]):
         return True
-    if any(phrase in q_text for phrase in ["true or false", "say true or false", "state true or false", "true/false", "t/f"]):
+    if any(phrase in q_text for phrase in [
+        "true or false", "say true or false", "state true or false", "true/false", "t/f",
+        "multiple choice", "choose the correct", "select the correct", "yes or no", "yes/no",
+        "which of the following", "mark true or false", "identify whether true or false",
+        "is it true that", "fill in the blank"
+    ]):
         return True
     return False
 
