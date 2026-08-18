@@ -191,6 +191,8 @@ def get_evaluation(
     if record is None:
         raise HTTPException(404, "evaluation_id not found")
 
+    identity = db.query(StudentIdentity).filter_by(evaluation_id=evaluation_id).first()
+
     quality_report = None
     if record.blur_score is not None:
         quality_report = QualityReport(
@@ -219,6 +221,7 @@ def get_evaluation(
     return EvaluationRecordOut(
         evaluation_id=record.evaluation_id,
         subject_id=record.subject_id,
+        register_number=identity.register_number if identity else None,
         status=record.status.value,
         quality_report=quality_report,
         ocr_data=ocr_data,

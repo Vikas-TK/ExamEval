@@ -23,10 +23,14 @@ class QuestionAnchor(BaseModel):
     """One detected question anchor in the OCR text."""
     raw_label: str          # e.g. "Q1", "1.", "(a)"
     normalized: str         # e.g. "Q1"
-    char_offset: int        # byte offset in flat text where anchor starts
+    char_offset: int        # byte offset in flat text where the anchor MATCH starts
+                             # (may include leading whitespace/newline consumed by the
+                             # pattern — do not assume raw_label begins exactly here)
+    label_end_offset: int   # byte offset right after the full label text — the
+                             # correct position to start slicing the answer from
     page_number: int
     confidence: float       # 0.0–1.0
-    detection_method: str   # "regex" | "llm_fallback"
+    detection_method: str   # "regex" | "llm_fallback" | "structure_map"
 
 
 class AnswerBlock(BaseModel):
@@ -93,6 +97,7 @@ class Phase3Response(BaseModel):
     validation_status: str
     output: str
     validation_report: ValidationReport | None = None
+    needs_manual_review: bool = False
 
 
 class MappedQAOut(BaseModel):

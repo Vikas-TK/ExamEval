@@ -115,8 +115,9 @@ class Phase3Service:
         logger.info("Answer blocks segmented: %d", len(blocks))
 
         # Step 4 & 5: Map to Blueprint
+        mapping_stats: dict[str, Any] = {}
         mapped_qas: list[MappedQA] = map_answers_to_blueprint(
-            blocks, blueprint_json, evaluation_id, blueprint_id
+            blocks, blueprint_json, evaluation_id, blueprint_id, stats=mapping_stats
         )
 
         # Step 6: Validate
@@ -139,6 +140,55 @@ class Phase3Service:
         self._repo.delete_by_evaluation_excluding_blueprint(evaluation_id, blueprint_id)
         self._repo.bulk_upsert(annotated_qas, report, per_q_val)
 
+        # Flag for manual review on either of two independent signals:
+        #
+        # 1. The mapper's Pass-4 safety net had to glue orphaned content
+        #    onto a neighboring question — content that WAS segmented into
+        #    its own block but couldn't be matched to a question by number,
+        #    content, or position.
+        # 2. A genuine anchor-count shortfall against the blueprint's own
+        #    question count. This catches a DIFFERENT failure shape Pass 4
+        #    never sees: a question with no anchor at all doesn't produce a
+        #    separate orphaned block — its content just becomes part of
+        #    whatever anchor precedes it during segmentation, from the
+        #    start, before Pass 4 ever runs (e.g. a missing "19." meant
+        #    Q19's whole answer was already inside Q18's block, not glued
+        #    on after the fact).
+        #
+        # A single missing anchor is common and NOT alarming on its own — a
+        # student skipping exactly one question is normal, not a mapping
+        # failure — so the shortfall threshold is deliberately > 1, not
+        # > 0: it tolerates one genuine blank while still catching cases
+        # like this one (one genuine blank + one truly-unrecovered anchor).
+        real_anchor_count = sum(
+            1 for a in anchors if not (a.normalized or "").upper().startswith(("PART", "SECTION"))
+        )
+        unique_question_ids = {bq.question_id for bq in bp_questions}
+        anchor_shortfall = len(unique_question_ids) - real_anchor_count
+
+        needs_manual_review = (
+            mapping_stats.get("orphaned_fragments_reattached", 0) > 0
+            or anchor_shortfall > 1
+        )
+        if needs_manual_review:
+            eval_record = (
+                self._db.query(EvaluationRecord)
+                .filter(EvaluationRecord.evaluation_id == evaluation_id)
+                .first()
+            )
+            if eval_record is not None:
+                eval_record.needs_manual_review = True
+                self._db.commit()
+                logger.warning(
+                    "Evaluation %s flagged NEEDS_MANUAL_REVIEW: %d answer fragment(s) "
+                    "reattached to a neighboring question by the Pass-4 safety net, "
+                    "%d anchor(s) short of the blueprint's %d expected questions.",
+                    evaluation_id,
+                    mapping_stats.get("orphaned_fragments_reattached", 0),
+                    max(anchor_shortfall, 0),
+                    len(unique_question_ids),
+                )
+
         return Phase3Response(
             status="SUCCESS",
             student_id=student_id,
@@ -151,4 +201,5 @@ class Phase3Service:
             validation_status=report.validation_status,
             output="Structured Question-Answer JSON stored successfully.",
             validation_report=report,
+            needs_manual_review=needs_manual_review,
         )

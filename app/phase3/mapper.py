@@ -406,11 +406,20 @@ def map_answers_to_blueprint(
     blueprint: dict[str, Any],
     evaluation_id: uuid.UUID,
     blueprint_id: uuid.UUID,
+    stats: dict[str, Any] | None = None,
 ) -> list[MappedQA]:
     """
     Map AnswerBlocks to blueprint questions, returning one MappedQA per blueprint question.
 
     Fault-tolerant: a failed mapping for one question does NOT stop others.
+
+    stats, when passed, is populated with 'orphaned_fragments_reattached' —
+    the count of answer fragments Pass 4's safety net had to glue onto a
+    neighboring question because nothing could confidently claim them as its
+    own. A non-zero count is the caller's signal that some content in this
+    evaluation couldn't be cleanly attributed to its real question (as
+    opposed to a question the student genuinely left blank, which never
+    reaches Pass 4 at all).
     """
     blocks = _merge_repeat_collisions(blocks)
     bp_questions = _extract_blueprint_questions(blueprint)
@@ -714,11 +723,41 @@ def map_answers_to_blueprint(
                 appended_text.setdefault(nearest_qid, []).append(orphan.raw_text)
 
         if appended_text:
+            reattached_count = sum(len(v) for v in appended_text.values())
             logger.info(
                 "Safety-net pass: reattached %d orphaned fragment(s) to their "
                 "nearest preceding mapped question instead of dropping them.",
-                sum(len(v) for v in appended_text.values()),
+                reattached_count,
             )
+            if stats is not None:
+                stats["orphaned_fragments_reattached"] = reattached_count
+
+    # Safety net for either/or question pairs whose blueprint generation gave
+    # both sub-parts the SAME question_id (e.g. "19(a)"/"19(b)" both stored as
+    # "q-q19") — a block is looked up by question_id, so every duplicate would
+    # otherwise receive the identical answer text and produce duplicate mapped
+    # rows for one physical answer. Resolve ahead of the main loop: for any
+    # question_id shared by more than one blueprint question, keep only the
+    # entry whose question_text best token-overlaps the matched block's answer
+    # (the sub-part the student actually attempted) as MAPPED; every other
+    # sibling falls through to the existing "no block" branch below and comes
+    # out SKIPPED — which is exactly correct here, since the student did skip
+    # that alternative in favor of the winning one.
+    id_to_indices: dict[str, list[int]] = {}
+    for idx, bq in enumerate(bp_questions):
+        id_to_indices.setdefault(bq.question_id, []).append(idx)
+
+    duplicate_loser_indices: set[int] = set()
+    for qid, indices in id_to_indices.items():
+        if len(indices) <= 1:
+            continue
+        block = direct_matches.get(qid) or qid_to_block.get(qid)
+        if block is None:
+            duplicate_loser_indices.update(indices[1:])
+            continue
+        block_tokens = _tokenize(block.raw_text)
+        winner_idx = max(indices, key=lambda i: len(_tokenize(bp_questions[i].question_text) & block_tokens))
+        duplicate_loser_indices.update(i for i in indices if i != winner_idx)
 
     mapped_qas: list[MappedQA] = []
 
@@ -727,7 +766,9 @@ def map_answers_to_blueprint(
             anchor_text: str | None = None
             anchor_confidence: float = 0.0
 
-            block = direct_matches.get(bq.question_id) or qid_to_block.get(bq.question_id)
+            block = None if seq_idx in duplicate_loser_indices else (
+                direct_matches.get(bq.question_id) or qid_to_block.get(bq.question_id)
+            )
 
             if block is not None:
                 anchor_text = block.anchor.raw_label

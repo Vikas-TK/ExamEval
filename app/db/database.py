@@ -12,7 +12,7 @@ from app.db.base import Base
 settings = get_settings()
 
 primary_db_url = settings.database_url or settings.supabase_db_url
-fallback_db_url = "sqlite:///./exam_eval.db"
+fallback_db_url = "sqlite:///./exam_eval_platform.db"
 
 
 def create_db_engine(url: str) -> Engine:

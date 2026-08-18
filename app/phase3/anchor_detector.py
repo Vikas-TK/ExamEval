@@ -74,6 +74,12 @@ _ROMAN_OR_LETTER_RE = re.compile(r"^[a-z]{1,4}$", re.I)
 # together at the top of that answer; a "(i)", "(ii)" bullet list deep inside
 # a multi-page essay does not.
 _SUBPART_PROXIMITY_CHARS = 500
+# Extracts just the leading number/sub-part token from a structure_map key
+# that has question text baked in too, e.g. "14. GAN" -> "14",
+# "1a): Denoising Autoencoder" -> "1a". Unlike _NUMERIC_LABEL_RE this does
+# NOT anchor with $, since the key is allowed to have trailing garbage —
+# only the token immediately after this prefix is trusted.
+_LEADING_LABEL_TOKEN_RE = re.compile(r"^(\d{1,3}(?:\.\d{1,2})?[a-z]?)\b", re.I)
 
 
 def _is_noise(text: str) -> bool:
@@ -104,14 +110,14 @@ def _normalize_label(raw: str) -> str:
     return f"Q{stripped}" if len(stripped) <= 3 and not stripped.startswith("Q") else stripped
 
 
-def _regex_detect(
-    flat_text: str,
-    page_map: list[tuple[int, int, int]],
-    blueprint_question_numbers: set[str] | None = None,
-) -> list[QuestionAnchor]:
+def _regex_detect(flat_text: str, page_map: list[tuple[int, int, int]]) -> list[QuestionAnchor]:
     """
-    Run all anchor regex patterns over flat_text and return deduplicated anchors.
-    page_map: list of (char_start, char_end, page_number) per page.
+    Run all anchor regex patterns over flat_text and return deduplicated,
+    UNGUARDED anchors (sorted by position). Callers run the result through
+    _apply_sequence_guard() themselves, after merging in any structure_map
+    recovery candidates — see detect_anchors() — so the guard's monotonic/
+    blueprint-aware logic sees the full picture in one pass rather than
+    guarding regex anchors in isolation and structure_map anchors separately.
     """
     anchors: list[QuestionAnchor] = []
     seen_offsets: set[int] = set()
@@ -133,17 +139,23 @@ def _regex_detect(
             seen_offsets.add(offset)
             target = match.group(1) if match.groups() and match.group(1) else match.group()
             raw_label = target.strip()
+            # match.end() (the WHOLE match, not match.end(1)) is the correct
+            # position for the segmenter to start slicing the answer from —
+            # several patterns consume trailing separator punctuation/
+            # whitespace ("16. ", "(a) ") *after* the captured group, and
+            # that separator needs to be skipped too, not just the digits.
             anchors.append(QuestionAnchor(
                 raw_label=raw_label,
                 normalized=_normalize_label(raw_label),
                 char_offset=offset,
+                label_end_offset=match.end(),
                 page_number=page_for_offset(offset),
                 confidence=base_conf,
                 detection_method="regex",
             ))
 
     anchors.sort(key=lambda a: a.char_offset)
-    return _apply_sequence_guard(anchors, blueprint_question_numbers)
+    return anchors
 
 
 def _apply_sequence_guard(
@@ -242,6 +254,159 @@ def _apply_sequence_guard(
     return accepted
 
 
+def _stringify_structure_map_value(value: Any) -> str:
+    """
+    Coerce a structure_map value to plain text. The schema asks the OCR
+    model for one string per question, but it sometimes returns a list of
+    bullet lines instead — mirrors the same normalization in
+    app/ocr_engine.py, duplicated (not imported) to avoid pulling that
+    module's OpenAI-client init into anchor_detector, and applied here too
+    so an OCR record persisted before that fix landed can still be
+    recovered from without needing a re-OCR.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value if isinstance(item, str) and item.strip())
+    return ""
+
+
+def _find_snippet_position(value: str, flat_text: str, search_from: int, search_to: int) -> int | None:
+    """
+    Locate roughly where `value`'s text begins within flat_text[search_from:search_to].
+
+    structure_map and transcript are both produced by the same OCR call but
+    aren't always word-for-word identical — a word can be dropped or altered
+    near the start of one but not the other (e.g. transcript: "We use LSTM...",
+    structure_map: "We LSTM..."). An exact-prefix match is too brittle for
+    that. Try a handful of phrase windows of decreasing length, and skip up
+    to 2 leading words in case the very first word is where they diverge —
+    prefer the longest, most specific match that's actually found.
+    """
+    words = value.strip().split()
+    for skip in (0, 1, 2):
+        for n in (8, 5, 3):
+            phrase_words = words[skip: skip + n]
+            if len(phrase_words) < n:
+                continue
+            phrase = " ".join(phrase_words)
+            if len(phrase) < 12:
+                continue
+            pos = flat_text.find(phrase, search_from, search_to)
+            if pos != -1:
+                return pos
+    return None
+
+
+def _base_number(label: str) -> int | None:
+    """Extract just the leading digit run from a label, ignoring any
+    decimal/letter sub-part suffix — "19", "19b", "19.1" all give 19."""
+    m = _NUMERIC_LABEL_RE.match(label.strip())
+    return int(m.group(1)) if m else None
+
+
+def _harvest_structure_map_anchors(
+    ocr_data: dict[str, Any],
+    flat_text: str,
+    page_map: list[tuple[int, int, int]],
+    exclude_base_numbers: set[int],
+) -> list[QuestionAnchor]:
+    """
+    Recover question anchors the regex patterns found zero evidence of, by
+    reading each page's `structure_map` (already returned by the OCR step
+    alongside `transcript`, but otherwise only merged into the transcript
+    text in a narrow len==1 case — see app/ocr_engine.py). The vision model
+    sometimes correctly identifies a question's number as a structure_map
+    key while dropping that same number from the free-form transcript body
+    (e.g. transcribing a whole page of answers with no inline "13.", "14.",
+    "15." labels, yet still keying them correctly in structure_map).
+
+    Rather than trust a structure_map key's position blindly (it carries no
+    real offset), locate the value text's own position within the page's
+    character range in flat_text via substring search — the answer content
+    itself is almost always present verbatim in the transcript even when its
+    label isn't, so this gives an exact, verifiable position rather than a
+    guess. Keys whose value can't be found at all are skipped rather than
+    given a fabricated position.
+
+    exclude_base_numbers skips any key whose BASE number (ignoring a
+    decimal/letter sub-part suffix) the regex detector already found
+    evidence for — compared by number, not exact normalized string, because
+    a structure_map key can label the same question at a different
+    granularity than the regex anchor already covering it (e.g. regex found
+    a plain "19", structure_map separately offers "19b" for the exact same
+    physical answer) — comparing only exact normalized strings would miss
+    that collision and let structure_map carve a spurious second split out
+    of content already claimed as one whole answer by the regex anchor.
+    This is purely a gap-filler for question numbers with NO other
+    evidence; it never competes with or overrides an already-detected
+    anchor. Callers must still run the combined anchor list through
+    _apply_sequence_guard(), which is what rejects a page's own internal
+    step-list keys (e.g. a long answer's structure_map coming back as
+    {"1": ..., "2": ...} for its own numbered steps) the same way it already
+    rejects the equivalent regex-detected false positives.
+    """
+    candidates: list[QuestionAnchor] = []
+    for page in ocr_data.get("pages", []):
+        structure_map = page.get("structure_map")
+        if not isinstance(structure_map, dict):
+            continue
+        pg_num = page.get("page_number", 1)
+        page_range = next(((s, e) for s, e, p in page_map if p == pg_num), None)
+        if page_range is None:
+            continue
+        page_start, page_end = page_range
+        search_from = page_start
+
+        for key, value in structure_map.items():
+            if not isinstance(key, str):
+                continue
+            key_stripped = key.strip()
+            if not key_stripped:
+                continue
+            # Prefer an exact clean label ("13", "17.", "18.1", "13a", "a"),
+            # the same shape _apply_sequence_guard already knows how to
+            # validate. When the key has question text baked in too (e.g.
+            # "14. GAN", "1a): Denoising Autoencoder"), extract just its
+            # leading numeric/sub-part token instead of rejecting the whole
+            # key outright — the guard still validates whatever comes out
+            # of this against the document's real question sequence, so an
+            # implausible extraction (e.g. OCR dropping a digit and turning
+            # "19a)" into "1a)") gets rejected there, not here.
+            exact = key_stripped.rstrip(".")
+            if _NUMERIC_LABEL_RE.match(exact) or _ROMAN_OR_LETTER_RE.match(exact):
+                raw_label = exact
+            else:
+                token_match = _LEADING_LABEL_TOKEN_RE.match(key_stripped)
+                if not token_match:
+                    continue
+                raw_label = token_match.group(1)
+            normalized = _normalize_label(raw_label)
+            base_num = _base_number(raw_label)
+            if base_num is not None and base_num in exclude_base_numbers:
+                continue
+            value_text = _stringify_structure_map_value(value)
+            if not value_text.strip():
+                continue
+            pos = _find_snippet_position(value_text, flat_text, search_from, page_end)
+            if pos is None:
+                continue
+            candidates.append(QuestionAnchor(
+                raw_label=raw_label,
+                normalized=normalized,
+                char_offset=pos,
+                label_end_offset=pos,  # zero-width: the answer text already
+                                       # starts right here, there's no
+                                       # separate label token to skip past.
+                page_number=pg_num,
+                confidence=0.75,
+                detection_method="structure_map",
+            ))
+            search_from = pos + 20
+
+    return candidates
+
+
 def looks_like_new_question(
     text: str,
     current_max_num: int,
@@ -336,11 +501,12 @@ def _llm_fallback_detect(flat_text: str) -> list[QuestionAnchor]:
         for label in labels:
             if not label.strip():
                 continue
-            offset = flat_text.find(label)
+            offset = max(flat_text.find(label), 0)
             anchors.append(QuestionAnchor(
                 raw_label=label,
                 normalized=_normalize_label(label),
-                char_offset=max(offset, 0),
+                char_offset=offset,
+                label_end_offset=offset + len(label),
                 page_number=1,
                 confidence=0.70,
                 detection_method="llm_fallback",
@@ -389,13 +555,34 @@ def detect_anchors(
 
     flat_text = "\n".join(segments)
 
-    anchors = _regex_detect(flat_text, page_map, blueprint_question_numbers)
+    anchors = _regex_detect(flat_text, page_map)
 
-    # Determine average confidence
-    avg_conf = (sum(a.confidence for a in anchors) / len(anchors)) if anchors else 0.0
+    # This average is deliberately computed on regex-only anchors, BEFORE
+    # structure_map recovery below — it decides whether the (slow, real LLM
+    # call) fallback is warranted, and that question is about whether regex
+    # itself struggled. structure_map anchors carry a lower fixed confidence
+    # (0.75 < the 0.85 threshold) as a mark of provenance, not uncertainty;
+    # letting them dilute this average would mean successfully recovering
+    # several anchors via structure_map routinely triggers ANOTHER expensive
+    # fallback call right after, on a document regex+structure_map already
+    # handled — the opposite of what this recovery path is for.
+    regex_avg_conf = (sum(a.confidence for a in anchors) / len(anchors)) if anchors else 0.0
 
-    if not anchors or avg_conf < _LOW_CONFIDENCE_THRESHOLD:
-        logger.info("Anchor confidence low (%.2f); invoking LLM fallback.", avg_conf)
+    # Recover anchors the regex found zero evidence of at all (e.g. a whole
+    # page transcribed with its question-number labels dropped, even though
+    # the model still keyed them correctly elsewhere) using each page's
+    # structure_map, already sitting in ocr_data at no extra cost — then run
+    # the combined set through the same sequence guard used for regex
+    # anchors (now also blueprint-aware), so a page's own internal step-list
+    # keys get rejected exactly like the equivalent regex false positives
+    # already are.
+    existing_base_numbers = {n for n in (_base_number(a.raw_label) for a in anchors) if n is not None}
+    structure_map_anchors = _harvest_structure_map_anchors(ocr_data, flat_text, page_map, existing_base_numbers)
+    anchors = sorted(anchors + structure_map_anchors, key=lambda a: a.char_offset)
+    anchors = _apply_sequence_guard(anchors, blueprint_question_numbers)
+
+    if not anchors or regex_avg_conf < _LOW_CONFIDENCE_THRESHOLD:
+        logger.info("Regex anchor confidence low (%.2f); invoking LLM fallback.", regex_avg_conf)
         llm_anchors = _llm_fallback_detect(flat_text)
         if llm_anchors:
             # Merge: prefer regex results, supplement with LLM labels not already found
@@ -410,7 +597,8 @@ def detect_anchors(
         logger.info("No labeled anchors found at all; falling back to paragraph-boundary segmentation.")
         anchors = _paragraph_fallback_detect(flat_text)
 
-    logger.info("Detected %d question anchors (avg_conf=%.2f).", len(anchors), avg_conf)
+    final_avg_conf = (sum(a.confidence for a in anchors) / len(anchors)) if anchors else 0.0
+    logger.info("Detected %d question anchors (avg_conf=%.2f).", len(anchors), final_avg_conf)
     return flat_text, page_map, anchors
 
 
@@ -437,6 +625,7 @@ def _paragraph_fallback_detect(flat_text: str) -> list[QuestionAnchor]:
             raw_label="",
             normalized="",
             char_offset=start,
+            label_end_offset=start,
             page_number=1,
             confidence=0.5,
             detection_method="paragraph_fallback",

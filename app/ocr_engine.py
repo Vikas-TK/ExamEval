@@ -458,6 +458,22 @@ def _extract_got_page(image_bytes: bytes, page_number: int) -> OCRPage:
     )
 
 
+def _stringify_structure_map_value(value: Any) -> str:
+    """
+    Coerce a structure_map value to plain text before it gets folded into
+    the transcript. The model's JSON schema asks for a string per question,
+    but it sometimes returns a list of bullet lines instead — naively
+    f-string-embedding that (`f"...{a}"`) produces a literal Python repr
+    like "['* point one', '* point two']" inside the transcript, which then
+    reads as garbled/fabricated text to anchor detection and to a human.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value if isinstance(item, str) and item.strip())
+    return str(value)
+
+
 def _extract_qwen_page(image_bytes: bytes, page_number: int, evaluation_id: Optional[str] = None) -> OCRPage:
     """
     Runs Qwen2.5-VL on a single enhanced page image and returns a
@@ -528,7 +544,9 @@ def _extract_qwen_page(image_bytes: bytes, page_number: int, evaluation_id: Opti
             # for a code block), merging would inject fake low-number
             # question anchors that can overwrite the real Q1-Q5 elsewhere
             # in the document via number-based matching.
-            structured_text = "\n\n".join(f"Question {q}:\n{a}" for q, a in structure_map.items() if a)
+            structured_text = "\n\n".join(
+                f"Question {q}:\n{_stringify_structure_map_value(a)}" for q, a in structure_map.items() if a
+            )
             if structured_text:
                 transcript = f"{transcript}\n\n{structured_text}".strip() if transcript else structured_text
 
